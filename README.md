@@ -39,3 +39,4 @@ You can launch it from Finder or with:
 open build/QuickSnap.app
 ```
 # quicksnap
+# quicksnap
