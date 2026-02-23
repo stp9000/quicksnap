@@ -5,3 +5,4 @@ Resources/AppIcon.iconset/
 .cache/
 .home/
 .tmp/
+dist/
