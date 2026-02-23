@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="61.44" y1="962.56" x2="962.56" y2="61.44" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5C31FA"/>
+      <stop offset="1" stop-color="#00D4FF"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="-10" stdDeviation="25" flood-color="#000000" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+
+  <rect x="61.44" y="61.44" width="901.12" height="901.12" rx="245.76" fill="url(#bg)"/>
+
+  <g filter="url(#shadow)">
+    <path fill-rule="evenodd" clip-rule="evenodd" fill="rgba(255,255,255,0.96)" d="
+      M 296.96 307.2
+      H 727.04
+      A 102.4 102.4 0 0 1 829.44 409.6
+      V 614.4
+      A 102.4 102.4 0 0 1 727.04 716.8
+      H 296.96
+      A 102.4 102.4 0 0 1 194.56 614.4
+      V 409.6
+      A 102.4 102.4 0 0 1 296.96 307.2
+      Z
+
+      M 327.68 696.32
+      H 430.08
+      A 61.44 61.44 0 0 1 491.52 757.76
+      V 747.52
+      A 61.44 61.44 0 0 1 430.08 808.96
+      H 327.68
+      A 61.44 61.44 0 0 1 266.24 747.52
+      V 757.76
+      A 61.44 61.44 0 0 1 327.68 696.32
+      Z
+
+      M 655.36 522.24
+      A 143.36 143.36 0 1 0 368.64 522.24
+      A 143.36 143.36 0 1 0 655.36 522.24
+      Z
+    "/>
+  </g>
+
+  <circle cx="512" cy="522.24" r="131.04" stroke="rgba(255,255,255,0.85)" stroke-width="18.43"/>
+  <circle cx="512" cy="522.24" r="81.92" stroke="rgba(199,247,255,0.70)" stroke-width="12.29"/>
+
+  <path d="
+    M 691.2 757.76 H 803.84
+    M 747.52 701.44 V 814.08
+    M 706.0 716.24 L 789.04 799.28
+    M 706.0 799.28 L 789.04 716.24
+  " stroke="rgba(255,255,255,0.92)" stroke-width="18.43" stroke-linecap="round"/>
+</svg>
+
