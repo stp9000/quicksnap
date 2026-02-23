@@ -38,3 +38,4 @@ You can launch it from Finder or with:
 ```bash
 open build/QuickSnap.app
 ```
+# quicksnap
