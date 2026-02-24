@@ -19,6 +19,12 @@ QuickSnap is a lightweight macOS screenshot annotation app inspired by Skitch.
 
 If macOS blocks launch, right-click `QuickSnap.app` -> `Open` -> `Open`.
 
+### Screen Recording Permission
+QuickSnap needs macOS Screen Recording permission to capture your display.  
+The first time you capture, macOS will prompt you to allow access in **System Settings -> Privacy & Security -> Screen Recording**.
+
+Note: Permission usually persists for the installed app. If you install a new unsigned build/version, macOS may ask again.
+
 ## Development Requirements
 
 - macOS 13+
