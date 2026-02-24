@@ -25,6 +25,8 @@ struct ContentView: View {
 
     private var toolBar: some View {
         HStack(spacing: 10) {
+            Spacer(minLength: 0)
+
             iconButton(symbol: "folder", helpText: "Open Image") {
                 document.openImageFromDisk()
             }
@@ -89,7 +91,7 @@ struct ContentView: View {
                 isDarkMode.toggle()
             }
 
-            Spacer()
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)

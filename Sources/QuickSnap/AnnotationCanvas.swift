@@ -16,7 +16,7 @@ struct AnnotationCanvas: View {
                 if document.showsSelectionBorder {
                     context.stroke(
                         Path(canvasRect.insetBy(dx: 1.5, dy: 1.5)),
-                        with: .color(.yellow),
+                        with: .color(Color(nsColor: .separatorColor)),
                         lineWidth: 3
                     )
                 }

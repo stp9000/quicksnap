@@ -351,7 +351,7 @@ final class AnnotationDocument: ObservableObject {
     }
 
     private func drawSelectionBorder(in rect: NSRect) {
-        NSColor.systemYellow.setStroke()
+        NSColor.separatorColor.setStroke()
         let border = NSBezierPath(rect: rect.insetBy(dx: 1.5, dy: 1.5))
         border.lineWidth = 3
         border.stroke()
