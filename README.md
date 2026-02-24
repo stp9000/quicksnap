@@ -10,7 +10,16 @@ QuickSnap is a lightweight macOS screenshot annotation app inspired by Skitch.
 - Export annotated output as PNG
 - Build a launchable `.app` bundle with a custom app icon
 
-## Requirements
+## End-User Install (No Swift/Xcode Required)
+
+1. Download `QuickSnap-macOS-unsigned.zip` from the latest GitHub Release.
+2. Unzip the archive.
+3. Drag `QuickSnap.app` into `/Applications`.
+4. Open the app.
+
+If macOS blocks launch, right-click `QuickSnap.app` -> `Open` -> `Open`.
+
+## Development Requirements
 
 - macOS 13+
 - Xcode command line tools (`swift`, `iconutil`)
@@ -38,5 +47,3 @@ You can launch it from Finder or with:
 ```bash
 open build/QuickSnap.app
 ```
-# quicksnap
-# quicksnap
