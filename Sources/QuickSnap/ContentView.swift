@@ -17,6 +17,9 @@ struct ContentView: View {
                     .padding(20)
             }
             .background(Color(nsColor: .windowBackgroundColor))
+
+            Divider()
+            exportFooter
         }
         .onDeleteCommand {
             document.deleteSelectedAnnotation()
@@ -104,5 +107,29 @@ struct ContentView: View {
         }
         .buttonStyle(.bordered)
         .help(helpText)
+    }
+
+    private var exportFooter: some View {
+        HStack(spacing: 12) {
+            Text(document.defaultExportFilename)
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            DragExportNotch(document: document)
+                .frame(width: 88, height: 28)
+                .disabled(document.backgroundImage == nil)
+                .opacity(document.backgroundImage == nil ? 0.55 : 1)
+
+            Text(document.currentResolutionText)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 34)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }

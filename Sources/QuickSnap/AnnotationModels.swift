@@ -59,6 +59,23 @@ final class AnnotationDocument: ObservableObject {
     @Published var strokes: [Stroke] = []
     @Published var shapes: [ShapeAnnotation] = []
     private var annotationHistory: [SelectedAnnotation] = []
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        return formatter
+    }()
+    private let defaultExportDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Pictures", isDirectory: true)
+        .appendingPathComponent("QuickSnap", isDirectory: true)
+
+    var defaultExportFilename: String {
+        "\(makeTimestampedBaseName()).png"
+    }
+
+    var currentResolutionText: String {
+        "\(Int(canvasSize.width)) x \(Int(canvasSize.height))"
+    }
 
     func clearAnnotations() {
         strokes.removeAll()
@@ -121,10 +138,10 @@ final class AnnotationDocument: ObservableObject {
     func saveAnnotatedImage() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
-        panel.nameFieldStringValue = "QuickSnap.png"
+        panel.nameFieldStringValue = defaultExportFilename
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        guard let pngData = renderPNGData() else { return }
+        guard let pngData = renderPNGDataForExport() else { return }
 
         do {
             try pngData.write(to: url)
@@ -133,9 +150,24 @@ final class AnnotationDocument: ObservableObject {
         }
     }
 
-    func makeDragExportItemProvider() -> NSItemProvider? {
-        guard let tempURL = writeRenderedPNGToTemporaryURL() else { return nil }
-        return NSItemProvider(contentsOf: tempURL)
+    func renderPNGDataForExport() -> Data? {
+        renderPNGData()
+    }
+
+    func writeExportPNGToTemporaryFile() -> URL? {
+        guard let pngData = renderPNGDataForExport() else { return nil }
+        let fileName = defaultExportFilename
+        let tempDirectory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let tempURL = tempDirectory.appendingPathComponent("\(UUID().uuidString)-\(fileName)")
+
+        do {
+            try pngData.write(to: tempURL, options: .atomic)
+            archiveExportPNGInBackground(pngData: pngData, fileName: fileName)
+            return tempURL
+        } catch {
+            NSSound.beep()
+            return nil
+        }
     }
 
     func undoLastAnnotation() {
@@ -176,20 +208,6 @@ final class AnnotationDocument: ObservableObject {
         }
 
         selectedAnnotation = nil
-    }
-
-    private func writeRenderedPNGToTemporaryURL() -> URL? {
-        let tempURL = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("QuickSnap-\(UUID().uuidString).png")
-
-        guard let pngData = renderPNGData() else { return nil }
-
-        do {
-            try pngData.write(to: tempURL)
-            return tempURL
-        } catch {
-            return nil
-        }
     }
 
     private func captureWhileAppHidden(showsSelectionBorder: Bool, _ work: @escaping () -> NSImage?) {
@@ -355,6 +373,37 @@ final class AnnotationDocument: ObservableObject {
         let border = NSBezierPath(rect: rect.insetBy(dx: 1.5, dy: 1.5))
         border.lineWidth = 3
         border.stroke()
+    }
+
+    private func makeTimestampedBaseName(now: Date = Date()) -> String {
+        let formatter = Self.timestampFormatter
+        formatter.timeZone = .autoupdatingCurrent
+        return "QuickSnap-\(formatter.string(from: now))"
+    }
+
+    private func writeExportPNGToDefaultFolder(pngData: Data, fileName: String) -> URL? {
+        let destinationURL = defaultExportDirectory.appendingPathComponent(fileName)
+        do {
+            try FileManager.default.createDirectory(at: defaultExportDirectory, withIntermediateDirectories: true)
+            try pngData.write(to: destinationURL, options: .atomic)
+            return destinationURL
+        } catch {
+            return nil
+        }
+    }
+
+    private func archiveExportPNGInBackground(pngData: Data, fileName: String) {
+        let destinationDirectory = defaultExportDirectory
+        let archiveData = pngData
+        DispatchQueue.global(qos: .utility).async {
+            let destinationURL = destinationDirectory.appendingPathComponent(fileName)
+            do {
+                try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+                try archiveData.write(to: destinationURL, options: .atomic)
+            } catch {
+                return
+            }
+        }
     }
 
     func addStroke(points: [CGPoint]) {
