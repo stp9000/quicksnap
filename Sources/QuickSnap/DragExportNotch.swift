@@ -3,22 +3,26 @@ import SwiftUI
 
 struct DragExportNotch: NSViewRepresentable {
     @ObservedObject var document: AnnotationDocument
+    let skin: AppSkin
 
     func makeNSView(context: Context) -> DragExportNotchView {
         let view = DragExportNotchView()
         view.document = document
+        view.skin = skin
         view.toolTip = "Drag to export PNG"
         return view
     }
 
     func updateNSView(_ nsView: DragExportNotchView, context: Context) {
         nsView.document = document
+        nsView.skin = skin
         nsView.needsDisplay = true
     }
 }
 
 final class DragExportNotchView: NSView, NSDraggingSource {
     weak var document: AnnotationDocument?
+    var skin: AppSkin = .classic
 
     private var trackingArea: NSTrackingArea?
     private var isHovering = false { didSet { needsDisplay = true } }
@@ -88,26 +92,51 @@ final class DragExportNotchView: NSView, NSDraggingSource {
         super.draw(dirtyRect)
 
         let notchRect = bounds.insetBy(dx: 1, dy: 1)
-        let radius: CGFloat = notchRect.height / 2
+        let radius: CGFloat = 3
         let notchPath = NSBezierPath(roundedRect: notchRect, xRadius: radius, yRadius: radius)
 
+        // Panel fill from skin
         let fillColor: NSColor
         if isPressed {
-            fillColor = NSColor.controlAccentColor.withAlphaComponent(0.55)
+            fillColor = skin.notchPressed
         } else if isHovering {
-            fillColor = NSColor.controlAccentColor.withAlphaComponent(0.42)
+            fillColor = skin.notchHover
         } else {
-            fillColor = NSColor.controlAccentColor.withAlphaComponent(0.3)
+            fillColor = skin.notchResting
         }
-
         fillColor.setFill()
         notchPath.fill()
 
-        let strokeColor = NSColor.separatorColor.withAlphaComponent(isEnabled ? 0.8 : 0.55)
-        strokeColor.setStroke()
+        // Outer border — near-black
+        NSColor(white: 0.06, alpha: 1.0).setStroke()
         notchPath.lineWidth = 1
         notchPath.stroke()
 
+        // Two-tone bevel from skin (inverted when pressed)
+        let bevelHi  = isPressed ? skin.notchBevelShadow : skin.notchBevelHi
+        let bevelShd = isPressed ? skin.notchBevelHi : skin.notchBevelShadow
+
+        let topLine = NSBezierPath()
+        topLine.move(to: NSPoint(x: notchRect.minX + radius, y: notchRect.maxY - 0.5))
+        topLine.line(to: NSPoint(x: notchRect.maxX - radius, y: notchRect.maxY - 0.5))
+        bevelHi.setStroke(); topLine.lineWidth = 1; topLine.stroke()
+
+        let leftLine = NSBezierPath()
+        leftLine.move(to: NSPoint(x: notchRect.minX + 0.5, y: notchRect.minY + radius))
+        leftLine.line(to: NSPoint(x: notchRect.minX + 0.5, y: notchRect.maxY - radius))
+        bevelHi.setStroke(); leftLine.lineWidth = 1; leftLine.stroke()
+
+        let bottomLine = NSBezierPath()
+        bottomLine.move(to: NSPoint(x: notchRect.minX + radius, y: notchRect.minY + 0.5))
+        bottomLine.line(to: NSPoint(x: notchRect.maxX - radius, y: notchRect.minY + 0.5))
+        bevelShd.setStroke(); bottomLine.lineWidth = 1; bottomLine.stroke()
+
+        let rightLine = NSBezierPath()
+        rightLine.move(to: NSPoint(x: notchRect.maxX - 0.5, y: notchRect.minY + radius))
+        rightLine.line(to: NSPoint(x: notchRect.maxX - 0.5, y: notchRect.maxY - radius))
+        bevelShd.setStroke(); rightLine.lineWidth = 1; rightLine.stroke()
+
+        // Icon — accent color from skin
         let iconName = "square.and.arrow.up"
         let imageConfig = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
         if let icon = NSImage(systemSymbolName: iconName, accessibilityDescription: "Export"),
@@ -118,7 +147,9 @@ final class DragExportNotchView: NSView, NSDraggingSource {
                 width: 14,
                 height: 14
             )
-            let iconColor = NSColor.white.withAlphaComponent(isEnabled ? 0.97 : 0.9)
+            let iconColor = isEnabled
+                ? skin.notchIcon.withAlphaComponent(isPressed ? 1.0 : 0.88)
+                : skin.notchIconDisabled
             let paletteConfig = NSImage.SymbolConfiguration(paletteColors: [iconColor])
             let coloredIcon = configured.withSymbolConfiguration(paletteConfig) ?? configured
             coloredIcon.draw(in: iconRect)

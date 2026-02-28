@@ -3,31 +3,53 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var document: AnnotationDocument
-    @Binding var isDarkMode: Bool
+    @EnvironmentObject var skinManager: SkinManager
+    @StateObject private var colorPanel = ColorPanelCoordinator()
+
+    private var skin: AppSkin { skinManager.current }
 
     var body: some View {
         VStack(spacing: 0) {
             toolBar
-            Divider()
+
+            Rectangle()
+                .fill(skin.separator)
+                .frame(height: 1)
 
             ScrollView([.horizontal, .vertical]) {
                 AnnotationCanvas(document: document)
                     .frame(width: document.canvasSize.width, height: document.canvasSize.height)
                     .background(Color.white)
+                    .overlay(
+                        Rectangle()
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [skin.canvasFrameStart, skin.canvasFrameEnd],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 2
+                            )
+                    )
+                    .shadow(color: Color.black.opacity(0.7), radius: 8, x: 0, y: 2)
                     .padding(20)
             }
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(skin.panelBg)
 
-            Divider()
+            Rectangle()
+                .fill(skin.separator)
+                .frame(height: 1)
+
             exportFooter
         }
+        .background(skin.panelBg)
         .onDeleteCommand {
             document.deleteSelectedAnnotation()
         }
     }
 
     private var toolBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Spacer(minLength: 0)
 
             iconButton(symbol: "folder", helpText: "Open Image") {
@@ -46,8 +68,7 @@ struct ContentView: View {
                 document.saveAnnotatedImage()
             }
 
-            Divider()
-                .frame(height: 20)
+            winAmpDivider()
 
             ForEach(AnnotationTool.allCases) { tool in
                 Button {
@@ -56,25 +77,33 @@ struct ContentView: View {
                     Image(systemName: tool.symbolName)
                         .frame(width: 28, height: 28)
                 }
-                .buttonStyle(.bordered)
-                .tint(document.selectedTool == tool ? .accentColor : nil)
+                .buttonStyle(WinAmpButtonStyle(skin: skin, isActive: document.selectedTool == tool))
                 .help(tool.rawValue)
             }
 
-            ColorPicker(
-                "",
-                selection: Binding(
-                    get: { Color(nsColor: document.color) },
-                    set: { document.color = NSColor($0) }
-                )
-            )
-            .labelsHidden()
-            .frame(width: 30)
+            Button {
+                colorPanel.onColorChange = { newColor in
+                    document.color = newColor
+                }
+                colorPanel.present(initial: document.color)
+            } label: {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(Color(nsColor: document.color))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                            .strokeBorder(skin.bevelShadow.opacity(0.8), lineWidth: 1)
+                    )
+                    .frame(width: 16, height: 16)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(WinAmpButtonStyle(skin: skin))
             .help("Annotation Color")
 
-            Slider(value: $document.lineWidth, in: 1 ... 20)
+            WinAmpSlider(skin: skin, value: $document.lineWidth, range: 1.0...20.0)
                 .frame(width: 110)
                 .help("Line Width")
+
+            winAmpDivider()
 
             iconButton(symbol: "arrow.uturn.backward", helpText: "Undo Last Annotation") {
                 document.undoLastAnnotation()
@@ -90,14 +119,70 @@ struct ContentView: View {
                 document.clearAnnotations()
             }
 
-            iconButton(symbol: isDarkMode ? "sun.max" : "moon", helpText: "Toggle Dark Mode") {
-                isDarkMode.toggle()
-            }
+            winAmpDivider()
+
+            skinPicker
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            LinearGradient(
+                colors: [skin.toolbarGradientTop, skin.panelBg],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+    }
+
+    private var skinPicker: some View {
+        Menu {
+            ForEach(SkinManager.all) { s in
+                Button {
+                    skinManager.select(s)
+                } label: {
+                    if skin.id == s.id {
+                        Label(s.name, systemImage: "checkmark")
+                    } else {
+                        Text(s.name)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.right")
+                .frame(width: 28, height: 28)
+                .foregroundColor(skin.iconIdle)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 28, height: 28)
+        .background(
+            LinearGradient(
+                colors: [skin.buttonGradTop, skin.buttonGradBottom],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            .allowsHitTesting(false)
+        )
+        .overlay(
+            BevelBorder(hi: skin.bevelHi, shadow: skin.bevelShadow, cornerRadius: 3, pressed: false)
+                .allowsHitTesting(false)
+        )
+        .help("Change Skin")
+    }
+
+    private func winAmpDivider() -> some View {
+        ZStack(alignment: .leading) {
+            Rectangle()
+                .fill(skin.separator)
+                .frame(width: 1, height: 22)
+            Rectangle()
+                .fill(skin.bevelHi.opacity(0.3))
+                .frame(width: 1, height: 22)
+                .offset(x: 1)
+        }
     }
 
     private func iconButton(symbol: String, helpText: String, action: @escaping () -> Void) -> some View {
@@ -105,31 +190,54 @@ struct ContentView: View {
             Image(systemName: symbol)
                 .frame(width: 28, height: 28)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(WinAmpButtonStyle(skin: skin))
         .help(helpText)
     }
 
     private var exportFooter: some View {
         HStack(spacing: 12) {
             Text(document.defaultExportFilename)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(.secondary)
+                .font(skin.lcdFont(size: 10))
+                .foregroundColor(skin.accentDim)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            DragExportNotch(document: document)
+            DragExportNotch(document: document, skin: skin)
                 .frame(width: 88, height: 28)
                 .disabled(document.backgroundImage == nil)
                 .opacity(document.backgroundImage == nil ? 0.55 : 1)
 
             Text(document.currentResolutionText)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(.secondary)
+                .font(skin.lcdFont(size: 10))
+                .foregroundColor(skin.accent)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(skin.panelBg)
+        .overlay(
+            Rectangle()
+                .fill(skin.separator)
+                .frame(height: 1),
+            alignment: .top
+        )
+    }
+}
+
+final class ColorPanelCoordinator: NSObject, ObservableObject {
+    var onColorChange: ((NSColor) -> Void)?
+
+    func present(initial: NSColor) {
+        let panel = NSColorPanel.shared
+        panel.color = initial
+        panel.setTarget(self)
+        panel.setAction(#selector(colorDidChange(_:)))
+        panel.orderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func colorDidChange(_ sender: NSColorPanel) {
+        onColorChange?(sender.color)
     }
 }
