@@ -3,13 +3,16 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var document: AnnotationDocument
+    @EnvironmentObject var skinManager: SkinManager
+
+    private var skin: AppSkin { skinManager.current }
 
     var body: some View {
         VStack(spacing: 0) {
             toolBar
 
             Rectangle()
-                .fill(WinAmp.separator)
+                .fill(skin.separator)
                 .frame(height: 1)
 
             ScrollView([.horizontal, .vertical]) {
@@ -20,7 +23,7 @@ struct ContentView: View {
                         Rectangle()
                             .strokeBorder(
                                 LinearGradient(
-                                    colors: [WinAmp.bevelDark, Color(hex: "#333333")],
+                                    colors: [skin.canvasFrameStart, skin.canvasFrameEnd],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 ),
@@ -30,15 +33,15 @@ struct ContentView: View {
                     .shadow(color: Color.black.opacity(0.7), radius: 8, x: 0, y: 2)
                     .padding(20)
             }
-            .background(WinAmp.panelBackground)
+            .background(skin.panelBg)
 
             Rectangle()
-                .fill(WinAmp.separator)
+                .fill(skin.separator)
                 .frame(height: 1)
 
             exportFooter
         }
-        .background(WinAmp.panelBackground)
+        .background(skin.panelBg)
         .onDeleteCommand {
             document.deleteSelectedAnnotation()
         }
@@ -73,7 +76,7 @@ struct ContentView: View {
                     Image(systemName: tool.symbolName)
                         .frame(width: 28, height: 28)
                 }
-                .buttonStyle(WinAmpButtonStyle(isActive: document.selectedTool == tool))
+                .buttonStyle(WinAmpButtonStyle(skin: skin, isActive: document.selectedTool == tool))
                 .help(tool.rawValue)
             }
 
@@ -88,11 +91,11 @@ struct ContentView: View {
             .frame(width: 30, height: 28)
             .overlay(
                 RoundedRectangle(cornerRadius: 3)
-                    .strokeBorder(WinAmp.accentGreen.opacity(0.6), lineWidth: 1)
+                    .strokeBorder(skin.accent.opacity(0.6), lineWidth: 1)
             )
             .help("Annotation Color")
 
-            WinAmpSlider(value: $document.lineWidth, range: 1.0...20.0)
+            WinAmpSlider(skin: skin, value: $document.lineWidth, range: 1.0...20.0)
                 .frame(width: 110)
                 .help("Line Width")
 
@@ -112,26 +115,62 @@ struct ContentView: View {
                 document.clearAnnotations()
             }
 
+            winAmpDivider()
+
+            skinPicker
+
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(
             LinearGradient(
-                colors: [Color(hex: "#282828"), WinAmp.panelBackground],
+                colors: [skin.toolbarGradientTop, skin.panelBg],
                 startPoint: .top,
                 endPoint: .bottom
             )
         )
     }
 
+    private var skinPicker: some View {
+        Menu {
+            ForEach(SkinManager.all) { s in
+                Button {
+                    skinManager.select(s)
+                } label: {
+                    if skin.id == s.id {
+                        Label(s.name, systemImage: "checkmark")
+                    } else {
+                        Text(s.name)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "paintpalette")
+                .frame(width: 28, height: 28)
+                .foregroundColor(skin.iconIdle)
+        }
+        .menuStyle(.borderlessButton)
+        .frame(width: 28, height: 28)
+        .background(
+            LinearGradient(
+                colors: [skin.buttonGradTop, skin.buttonGradBottom],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        )
+        .overlay(BevelBorder(hi: skin.bevelHi, shadow: skin.bevelShadow, cornerRadius: 3, pressed: false))
+        .help("Change Skin")
+    }
+
     private func winAmpDivider() -> some View {
         ZStack(alignment: .leading) {
             Rectangle()
-                .fill(WinAmp.separator)
+                .fill(skin.separator)
                 .frame(width: 1, height: 22)
             Rectangle()
-                .fill(WinAmp.bevelLight.opacity(0.3))
+                .fill(skin.bevelHi.opacity(0.3))
                 .frame(width: 1, height: 22)
                 .offset(x: 1)
         }
@@ -142,35 +181,35 @@ struct ContentView: View {
             Image(systemName: symbol)
                 .frame(width: 28, height: 28)
         }
-        .buttonStyle(WinAmpButtonStyle())
+        .buttonStyle(WinAmpButtonStyle(skin: skin))
         .help(helpText)
     }
 
     private var exportFooter: some View {
         HStack(spacing: 12) {
             Text(document.defaultExportFilename)
-                .font(WinAmp.lcdFont(size: 10))
-                .foregroundColor(WinAmp.dimGreen)
+                .font(skin.lcdFont(size: 10))
+                .foregroundColor(skin.accentDim)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            DragExportNotch(document: document)
+            DragExportNotch(document: document, skin: skin)
                 .frame(width: 88, height: 28)
                 .disabled(document.backgroundImage == nil)
                 .opacity(document.backgroundImage == nil ? 0.55 : 1)
 
             Text(document.currentResolutionText)
-                .font(WinAmp.lcdFont(size: 10))
-                .foregroundColor(WinAmp.accentGreen)
+                .font(skin.lcdFont(size: 10))
+                .foregroundColor(skin.accent)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
-        .background(WinAmp.panelBackground)
+        .background(skin.panelBg)
         .overlay(
             Rectangle()
-                .fill(WinAmp.separator)
+                .fill(skin.separator)
                 .frame(height: 1),
             alignment: .top
         )

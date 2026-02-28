@@ -3,22 +3,26 @@ import SwiftUI
 
 struct DragExportNotch: NSViewRepresentable {
     @ObservedObject var document: AnnotationDocument
+    let skin: AppSkin
 
     func makeNSView(context: Context) -> DragExportNotchView {
         let view = DragExportNotchView()
         view.document = document
+        view.skin = skin
         view.toolTip = "Drag to export PNG"
         return view
     }
 
     func updateNSView(_ nsView: DragExportNotchView, context: Context) {
         nsView.document = document
+        nsView.skin = skin
         nsView.needsDisplay = true
     }
 }
 
 final class DragExportNotchView: NSView, NSDraggingSource {
     weak var document: AnnotationDocument?
+    var skin: AppSkin = .classic
 
     private var trackingArea: NSTrackingArea?
     private var isHovering = false { didSet { needsDisplay = true } }
@@ -88,17 +92,17 @@ final class DragExportNotchView: NSView, NSDraggingSource {
         super.draw(dirtyRect)
 
         let notchRect = bounds.insetBy(dx: 1, dy: 1)
-        let radius: CGFloat = 3  // WinAmp square-ish corners
+        let radius: CGFloat = 3
         let notchPath = NSBezierPath(roundedRect: notchRect, xRadius: radius, yRadius: radius)
 
-        // Panel fill — dark WinAmp tones with green tint on hover/press
+        // Panel fill from skin
         let fillColor: NSColor
         if isPressed {
-            fillColor = NSColor(red: 0.07, green: 0.17, blue: 0.09, alpha: 1.0)
+            fillColor = skin.notchPressed
         } else if isHovering {
-            fillColor = NSColor(red: 0.10, green: 0.22, blue: 0.11, alpha: 1.0)
+            fillColor = skin.notchHover
         } else {
-            fillColor = NSColor(red: 0.17, green: 0.17, blue: 0.17, alpha: 1.0)
+            fillColor = skin.notchResting
         }
         fillColor.setFill()
         notchPath.fill()
@@ -108,47 +112,31 @@ final class DragExportNotchView: NSView, NSDraggingSource {
         notchPath.lineWidth = 1
         notchPath.stroke()
 
-        // Two-tone bevel: top + left vs bottom + right (inverted when pressed)
-        let highlightColor = isPressed
-            ? NSColor(white: 0.04, alpha: 0.9)
-            : NSColor(white: 0.35, alpha: 0.9)
-        let shadowColor = isPressed
-            ? NSColor(white: 0.35, alpha: 0.9)
-            : NSColor(white: 0.04, alpha: 0.9)
+        // Two-tone bevel from skin (inverted when pressed)
+        let bevelHi  = isPressed ? skin.notchBevelShadow : skin.notchBevelHi
+        let bevelShd = isPressed ? skin.notchBevelHi : skin.notchBevelShadow
 
-        // Top edge
         let topLine = NSBezierPath()
         topLine.move(to: NSPoint(x: notchRect.minX + radius, y: notchRect.maxY - 0.5))
         topLine.line(to: NSPoint(x: notchRect.maxX - radius, y: notchRect.maxY - 0.5))
-        highlightColor.setStroke()
-        topLine.lineWidth = 1
-        topLine.stroke()
+        bevelHi.setStroke(); topLine.lineWidth = 1; topLine.stroke()
 
-        // Left edge
         let leftLine = NSBezierPath()
         leftLine.move(to: NSPoint(x: notchRect.minX + 0.5, y: notchRect.minY + radius))
         leftLine.line(to: NSPoint(x: notchRect.minX + 0.5, y: notchRect.maxY - radius))
-        highlightColor.setStroke()
-        leftLine.lineWidth = 1
-        leftLine.stroke()
+        bevelHi.setStroke(); leftLine.lineWidth = 1; leftLine.stroke()
 
-        // Bottom edge
         let bottomLine = NSBezierPath()
         bottomLine.move(to: NSPoint(x: notchRect.minX + radius, y: notchRect.minY + 0.5))
         bottomLine.line(to: NSPoint(x: notchRect.maxX - radius, y: notchRect.minY + 0.5))
-        shadowColor.setStroke()
-        bottomLine.lineWidth = 1
-        bottomLine.stroke()
+        bevelShd.setStroke(); bottomLine.lineWidth = 1; bottomLine.stroke()
 
-        // Right edge
         let rightLine = NSBezierPath()
         rightLine.move(to: NSPoint(x: notchRect.maxX - 0.5, y: notchRect.minY + radius))
         rightLine.line(to: NSPoint(x: notchRect.maxX - 0.5, y: notchRect.maxY - radius))
-        shadowColor.setStroke()
-        rightLine.lineWidth = 1
-        rightLine.stroke()
+        bevelShd.setStroke(); rightLine.lineWidth = 1; rightLine.stroke()
 
-        // Icon — WinAmp green
+        // Icon — accent color from skin
         let iconName = "square.and.arrow.up"
         let imageConfig = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
         if let icon = NSImage(systemSymbolName: iconName, accessibilityDescription: "Export"),
@@ -159,10 +147,9 @@ final class DragExportNotchView: NSView, NSDraggingSource {
                 width: 14,
                 height: 14
             )
-            let iconColor = NSColor(
-                red: 0.0, green: 1.0, blue: 0.255,
-                alpha: isEnabled ? (isPressed ? 1.0 : 0.88) : 0.30
-            )
+            let iconColor = isEnabled
+                ? skin.notchIcon.withAlphaComponent(isPressed ? 1.0 : 0.88)
+                : skin.notchIconDisabled
             let paletteConfig = NSImage.SymbolConfiguration(paletteColors: [iconColor])
             let coloredIcon = configured.withSymbolConfiguration(paletteConfig) ?? configured
             coloredIcon.draw(in: iconRect)
