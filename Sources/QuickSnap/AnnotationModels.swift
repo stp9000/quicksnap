@@ -49,12 +49,18 @@ enum SelectedAnnotation: Equatable {
 
 @MainActor
 final class AnnotationDocument: ObservableObject {
+    private static let annotationColorDefaultsKey = "quicksnap.annotationColorHex"
+
     @Published var backgroundImage: NSImage?
     @Published var showsSelectionBorder = false
     @Published var canvasSize = CGSize(width: 1280, height: 800)
     @Published var selectedTool: AnnotationTool = .pen
     @Published var selectedAnnotation: SelectedAnnotation?
-    @Published var color: NSColor = .systemRed
+    @Published var color: NSColor = .systemRed {
+        didSet {
+            persistSelectedColor()
+        }
+    }
     @Published var lineWidth: CGFloat = 4
     @Published var strokes: [Stroke] = []
     @Published var shapes: [ShapeAnnotation] = []
@@ -68,6 +74,12 @@ final class AnnotationDocument: ObservableObject {
     private let defaultExportDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Pictures", isDirectory: true)
         .appendingPathComponent("QuickSnap", isDirectory: true)
+
+    init() {
+        if let savedHex = UserDefaults.standard.string(forKey: Self.annotationColorDefaultsKey) {
+            color = NSColor(hex: savedHex)
+        }
+    }
 
     var defaultExportFilename: String {
         "\(makeTimestampedBaseName()).png"
@@ -373,6 +385,27 @@ final class AnnotationDocument: ObservableObject {
         let border = NSBezierPath(rect: rect.insetBy(dx: 1.5, dy: 1.5))
         border.lineWidth = 3
         border.stroke()
+    }
+
+    private func persistSelectedColor() {
+        guard let rgbHex = rgbHexString(for: color) else { return }
+        UserDefaults.standard.set(rgbHex, forKey: Self.annotationColorDefaultsKey)
+    }
+
+    private func rgbHexString(for color: NSColor) -> String? {
+        guard let rgbColor = color.usingColorSpace(.deviceRGB) else {
+            return nil
+        }
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        rgbColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+
+        let r = Int(round(red * 255))
+        let g = Int(round(green * 255))
+        let b = Int(round(blue * 255))
+        return String(format: "%02X%02X%02X", r, g, b)
     }
 
     private func makeTimestampedBaseName(now: Date = Date()) -> String {

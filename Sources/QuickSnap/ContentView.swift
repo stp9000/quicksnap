@@ -4,6 +4,7 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var document: AnnotationDocument
     @EnvironmentObject var skinManager: SkinManager
+    @StateObject private var colorPanel = ColorPanelCoordinator()
 
     private var skin: AppSkin { skinManager.current }
 
@@ -80,19 +81,22 @@ struct ContentView: View {
                 .help(tool.rawValue)
             }
 
-            ColorPicker(
-                "",
-                selection: Binding(
-                    get: { Color(nsColor: document.color) },
-                    set: { document.color = NSColor($0) }
-                )
-            )
-            .labelsHidden()
-            .frame(width: 30, height: 28)
-            .overlay(
-                RoundedRectangle(cornerRadius: 3)
-                    .strokeBorder(skin.accent.opacity(0.6), lineWidth: 1)
-            )
+            Button {
+                colorPanel.onColorChange = { newColor in
+                    document.color = newColor
+                }
+                colorPanel.present(initial: document.color)
+            } label: {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(Color(nsColor: document.color))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                            .strokeBorder(skin.bevelShadow.opacity(0.8), lineWidth: 1)
+                    )
+                    .frame(width: 16, height: 16)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(WinAmpButtonStyle(skin: skin))
             .help("Annotation Color")
 
             WinAmpSlider(skin: skin, value: $document.lineWidth, range: 1.0...20.0)
@@ -146,11 +150,12 @@ struct ContentView: View {
                 }
             }
         } label: {
-            Image(systemName: "paintpalette")
+            Image(systemName: "arrow.right")
                 .frame(width: 28, height: 28)
                 .foregroundColor(skin.iconIdle)
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .frame(width: 28, height: 28)
         .background(
             LinearGradient(
@@ -159,8 +164,12 @@ struct ContentView: View {
                 endPoint: .bottom
             )
             .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            .allowsHitTesting(false)
         )
-        .overlay(BevelBorder(hi: skin.bevelHi, shadow: skin.bevelShadow, cornerRadius: 3, pressed: false))
+        .overlay(
+            BevelBorder(hi: skin.bevelHi, shadow: skin.bevelShadow, cornerRadius: 3, pressed: false)
+                .allowsHitTesting(false)
+        )
         .help("Change Skin")
     }
 
@@ -213,5 +222,22 @@ struct ContentView: View {
                 .frame(height: 1),
             alignment: .top
         )
+    }
+}
+
+final class ColorPanelCoordinator: NSObject, ObservableObject {
+    var onColorChange: ((NSColor) -> Void)?
+
+    func present(initial: NSColor) {
+        let panel = NSColorPanel.shared
+        panel.color = initial
+        panel.setTarget(self)
+        panel.setAction(#selector(colorDidChange(_:)))
+        panel.orderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func colorDidChange(_ sender: NSColorPanel) {
+        onColorChange?(sender.color)
     }
 }
