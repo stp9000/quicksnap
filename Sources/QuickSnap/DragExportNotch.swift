@@ -29,6 +29,8 @@ final class DragExportNotchView: NSView, NSDraggingSource {
     private var isPressed = false { didSet { needsDisplay = true } }
     private var hasStartedDrag = false
     private var preparedDragFileURL: URL?
+    private weak var temporarilyHiddenWindow: NSWindow?
+    private var previousWindowIgnoresMouseEvents = false
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: 88, height: 28)
@@ -76,6 +78,7 @@ final class DragExportNotchView: NSView, NSDraggingSource {
         if !started {
             hasStartedDrag = false
             isPressed = false
+            restoreWindowAfterDrag()
         }
     }
 
@@ -179,9 +182,6 @@ final class DragExportNotchView: NSView, NSDraggingSource {
 
         let session = beginDraggingSession(with: [item], event: event, source: self)
         session.animatesToStartingPositionsOnCancelOrFail = true
-        DispatchQueue.main.async {
-            NSApp.hide(nil)
-        }
         return true
     }
 
@@ -199,15 +199,31 @@ final class DragExportNotchView: NSView, NSDraggingSource {
         true
     }
 
+    func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
+        hideWindowForDrag()
+    }
+
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         hasStartedDrag = false
         isPressed = false
         preparedDragFileURL = nil
-        if !operation.contains(.copy) {
-            DispatchQueue.main.async {
-                NSApp.unhide(nil)
-                NSApp.activate(ignoringOtherApps: true)
-            }
-        }
+        restoreWindowAfterDrag()
+    }
+
+    private func hideWindowForDrag() {
+        guard let sourceWindow = window else { return }
+        temporarilyHiddenWindow = sourceWindow
+        previousWindowIgnoresMouseEvents = sourceWindow.ignoresMouseEvents
+        sourceWindow.ignoresMouseEvents = true
+        sourceWindow.alphaValue = 0.0
+    }
+
+    private func restoreWindowAfterDrag() {
+        guard let sourceWindow = temporarilyHiddenWindow else { return }
+        sourceWindow.alphaValue = 1.0
+        sourceWindow.ignoresMouseEvents = previousWindowIgnoresMouseEvents
+        sourceWindow.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        temporarilyHiddenWindow = nil
     }
 }
