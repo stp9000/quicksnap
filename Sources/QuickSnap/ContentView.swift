@@ -13,43 +13,87 @@ struct ContentView: View {
             toolBar
 
             Rectangle()
-                .fill(skin.separator)
+                .fill(skin.isModern ? skin.border : skin.separator)
                 .frame(height: 1)
 
             ScrollView([.horizontal, .vertical]) {
-                AnnotationCanvas(document: document)
-                    .frame(width: document.canvasSize.width, height: document.canvasSize.height)
-                    .background(Color.white)
-                    .overlay(
-                        Rectangle()
-                            .strokeBorder(
-                                LinearGradient(
-                                    colors: [skin.canvasFrameStart, skin.canvasFrameEnd],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 2
-                            )
-                    )
-                    .shadow(color: Color.black.opacity(0.7), radius: 8, x: 0, y: 2)
-                    .padding(20)
+                if skin.isModern {
+                    modernCanvas
+                } else {
+                    winAmpCanvas
+                }
             }
-            .background(skin.panelBg)
+            .background(canvasBackground)
 
             Rectangle()
-                .fill(skin.separator)
+                .fill(skin.isModern ? skin.border : skin.separator)
                 .frame(height: 1)
 
             exportFooter
         }
-        .background(skin.panelBg)
+        .background(windowBackground)
+        .background(WindowTransparencyHelper(isGlass: skin.isGlass))
         .onDeleteCommand {
             document.deleteSelectedAnnotation()
         }
     }
 
+    @ViewBuilder
+    private var windowBackground: some View {
+        if skin.isGlass {
+            Rectangle().fill(.ultraThinMaterial)
+        } else {
+            skin.panelBg
+        }
+    }
+
+    @ViewBuilder
+    private var canvasBackground: some View {
+        if skin.isGlass {
+            Color.clear
+        } else {
+            skin.panelBg
+        }
+    }
+
+    // MARK: - Canvas Variants
+
+    private var modernCanvas: some View {
+        AnnotationCanvas(document: document)
+            .frame(width: document.canvasSize.width, height: document.canvasSize.height)
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .strokeBorder(skin.border, lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.25), radius: 16, x: 0, y: 4)
+            .padding(24)
+    }
+
+    private var winAmpCanvas: some View {
+        AnnotationCanvas(document: document)
+            .frame(width: document.canvasSize.width, height: document.canvasSize.height)
+            .background(Color.white)
+            .overlay(
+                Rectangle()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [skin.canvasFrameStart, skin.canvasFrameEnd],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 2
+                    )
+            )
+            .shadow(color: Color.black.opacity(0.7), radius: 8, x: 0, y: 2)
+            .padding(20)
+    }
+
+    // MARK: - Toolbar
+
     private var toolBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: skin.isModern ? 10 : 8) {
             Spacer(minLength: 0)
 
             iconButton(symbol: "folder", helpText: "Open Image") {
@@ -68,42 +112,32 @@ struct ContentView: View {
                 document.saveAnnotatedImage()
             }
 
-            winAmpDivider()
+            themeDivider()
 
             ForEach(AnnotationTool.allCases) { tool in
                 Button {
                     document.selectedTool = tool
                 } label: {
                     Image(systemName: tool.symbolName)
-                        .frame(width: 28, height: 28)
+                        .frame(width: skin.isModern ? 32 : 28, height: skin.isModern ? 32 : 28)
                 }
-                .buttonStyle(WinAmpButtonStyle(skin: skin, isActive: document.selectedTool == tool))
+                .buttonStyle(currentButtonStyle(isActive: document.selectedTool == tool))
                 .help(tool.rawValue)
             }
 
-            Button {
-                colorPanel.onColorChange = { newColor in
-                    document.color = newColor
-                }
-                colorPanel.present(initial: document.color)
-            } label: {
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(Color(nsColor: document.color))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .strokeBorder(skin.bevelShadow.opacity(0.8), lineWidth: 1)
-                    )
-                    .frame(width: 16, height: 16)
-                    .frame(width: 28, height: 28)
+            colorPickerButton
+
+            if skin.isModern {
+                ModernSlider(skin: skin, value: $document.lineWidth, range: 1.0...20.0)
+                    .frame(width: 110)
+                    .help("Line Width")
+            } else {
+                WinAmpSlider(skin: skin, value: $document.lineWidth, range: 1.0...20.0)
+                    .frame(width: 110)
+                    .help("Line Width")
             }
-            .buttonStyle(WinAmpButtonStyle(skin: skin))
-            .help("Annotation Color")
 
-            WinAmpSlider(skin: skin, value: $document.lineWidth, range: 1.0...20.0)
-                .frame(width: 110)
-                .help("Line Width")
-
-            winAmpDivider()
+            themeDivider()
 
             iconButton(symbol: "arrow.uturn.backward", helpText: "Undo Last Annotation") {
                 document.undoLastAnnotation()
@@ -119,45 +153,95 @@ struct ContentView: View {
                 document.clearAnnotations()
             }
 
-            winAmpDivider()
+            themeDivider()
 
             skinPicker
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
+        .padding(.horizontal, skin.isModern ? 16 : 10)
+        .padding(.vertical, skin.isModern ? 12 : 8)
+        .background(toolbarBackground)
+    }
+
+    // MARK: - Toolbar Background
+
+    @ViewBuilder
+    private var toolbarBackground: some View {
+        if skin.isGlass {
+            Rectangle().fill(.ultraThinMaterial)
+        } else if skin.isModern {
+            skin.surface
+        } else {
             LinearGradient(
                 colors: [skin.toolbarGradientTop, skin.panelBg],
                 startPoint: .top,
                 endPoint: .bottom
             )
-        )
+        }
     }
+
+    @ViewBuilder
+    private var footerBackground: some View {
+        if skin.isGlass {
+            Rectangle().fill(.ultraThinMaterial)
+        } else if skin.isModern {
+            skin.surface
+        } else {
+            skin.panelBg
+        }
+    }
+
+    // MARK: - Skin Picker
 
     private var skinPicker: some View {
         Menu {
-            ForEach(SkinManager.all) { s in
-                Button {
-                    skinManager.select(s)
-                } label: {
-                    if skin.id == s.id {
-                        Label(s.name, systemImage: "checkmark")
-                    } else {
-                        Text(s.name)
+            Section("Modern") {
+                ForEach(SkinManager.all.filter { $0.isModern }) { s in
+                    Button {
+                        skinManager.select(s)
+                    } label: {
+                        if skin.id == s.id {
+                            Label(s.name, systemImage: "checkmark")
+                        } else {
+                            Text(s.name)
+                        }
+                    }
+                }
+            }
+            Section("Classic") {
+                ForEach(SkinManager.all.filter { !$0.isModern }) { s in
+                    Button {
+                        skinManager.select(s)
+                    } label: {
+                        if skin.id == s.id {
+                            Label(s.name, systemImage: "checkmark")
+                        } else {
+                            Text(s.name)
+                        }
                     }
                 }
             }
         } label: {
-            Image(systemName: "arrow.right")
-                .frame(width: 28, height: 28)
+            Image(systemName: "paintpalette")
+                .frame(width: skin.isModern ? 32 : 28, height: skin.isModern ? 32 : 28)
                 .foregroundColor(skin.iconIdle)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .frame(width: 28, height: 28)
-        .background(
+        .frame(width: skin.isModern ? 32 : 28, height: skin.isModern ? 32 : 28)
+        .background(skinPickerBackground)
+        .overlay(skinPickerOverlay)
+        .help("Change Theme")
+    }
+
+    @ViewBuilder
+    private var skinPickerBackground: some View {
+        if skin.isModern {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(skin.buttonFace)
+                .allowsHitTesting(false)
+        } else {
             LinearGradient(
                 colors: [skin.buttonGradTop, skin.buttonGradBottom],
                 startPoint: .top,
@@ -165,12 +249,34 @@ struct ContentView: View {
             )
             .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
             .allowsHitTesting(false)
-        )
-        .overlay(
+        }
+    }
+
+    @ViewBuilder
+    private var skinPickerOverlay: some View {
+        if !skin.isModern {
             BevelBorder(hi: skin.bevelHi, shadow: skin.bevelShadow, cornerRadius: 3, pressed: false)
                 .allowsHitTesting(false)
-        )
-        .help("Change Skin")
+        }
+    }
+
+    // MARK: - Dividers
+
+    private func themeDivider() -> some View {
+        Group {
+            if skin.isModern {
+                modernDivider()
+            } else {
+                winAmpDivider()
+            }
+        }
+    }
+
+    private func modernDivider() -> some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.06))
+            .frame(width: 1, height: 20)
+            .padding(.horizontal, 3)
     }
 
     private func winAmpDivider() -> some View {
@@ -185,19 +291,56 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Helpers
+
+    private func currentButtonStyle(isActive: Bool = false) -> AnyButtonStyle {
+        if skin.isModern {
+            return AnyButtonStyle(ModernButtonStyle(skin: skin, isActive: isActive))
+        } else {
+            return AnyButtonStyle(WinAmpButtonStyle(skin: skin, isActive: isActive))
+        }
+    }
+
     private func iconButton(symbol: String, helpText: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .frame(width: 28, height: 28)
+                .frame(width: skin.isModern ? 32 : 28, height: skin.isModern ? 32 : 28)
         }
-        .buttonStyle(WinAmpButtonStyle(skin: skin))
+        .buttonStyle(currentButtonStyle())
         .help(helpText)
     }
+
+    // MARK: - Color Picker
+
+    private var colorPickerButton: some View {
+        Button {
+            colorPanel.onColorChange = { newColor in
+                document.color = newColor
+            }
+            colorPanel.present(initial: document.color)
+        } label: {
+            RoundedRectangle(cornerRadius: skin.isModern ? 4 : 2, style: .continuous)
+                .fill(Color(nsColor: document.color))
+                .overlay(
+                    RoundedRectangle(cornerRadius: skin.isModern ? 4 : 2, style: .continuous)
+                        .strokeBorder(
+                            skin.isModern ? skin.border : skin.bevelShadow.opacity(0.8),
+                            lineWidth: 1
+                        )
+                )
+                .frame(width: skin.isModern ? 18 : 16, height: skin.isModern ? 18 : 16)
+                .frame(width: skin.isModern ? 32 : 28, height: skin.isModern ? 32 : 28)
+        }
+        .buttonStyle(currentButtonStyle())
+        .help("Annotation Color")
+    }
+
+    // MARK: - Footer
 
     private var exportFooter: some View {
         HStack(spacing: 12) {
             Text(document.defaultExportFilename)
-                .font(skin.lcdFont(size: 10))
+                .font(skin.isModern ? skin.primaryFont(size: 11) : skin.lcdFont(size: 10))
                 .foregroundColor(skin.accentDim)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -209,21 +352,39 @@ struct ContentView: View {
                 .opacity(document.backgroundImage == nil ? 0.55 : 1)
 
             Text(document.currentResolutionText)
-                .font(skin.lcdFont(size: 10))
+                .font(skin.isModern ? skin.monoFont(size: 11) : skin.lcdFont(size: 10))
                 .foregroundColor(skin.accent)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .padding(.horizontal, 12)
-        .frame(height: 34)
-        .background(skin.panelBg)
+        .padding(.horizontal, skin.isModern ? 16 : 12)
+        .frame(height: skin.isModern ? 36 : 34)
+        .background(footerBackground)
         .overlay(
             Rectangle()
-                .fill(skin.separator)
+                .fill(skin.isModern ? skin.border : skin.separator)
                 .frame(height: 1),
             alignment: .top
         )
     }
 }
+
+// MARK: - AnyButtonStyle (type-erased wrapper)
+
+struct AnyButtonStyle: ButtonStyle {
+    private let _makeBody: (Configuration) -> AnyView
+
+    init<S: ButtonStyle>(_ style: S) {
+        _makeBody = { configuration in
+            AnyView(style.makeBody(configuration: configuration))
+        }
+    }
+
+    func makeBody(configuration: Configuration) -> some View {
+        _makeBody(configuration)
+    }
+}
+
+// MARK: - ColorPanelCoordinator
 
 final class ColorPanelCoordinator: NSObject, ObservableObject {
     var onColorChange: ((NSColor) -> Void)?
@@ -239,5 +400,30 @@ final class ColorPanelCoordinator: NSObject, ObservableObject {
 
     @objc private func colorDidChange(_ sender: NSColorPanel) {
         onColorChange?(sender.color)
+    }
+}
+
+// MARK: - WindowTransparencyHelper
+
+struct WindowTransparencyHelper: NSViewRepresentable {
+    let isGlass: Bool
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.alphaValue = 0
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            guard let window = nsView.window else { return }
+            if isGlass {
+                window.isOpaque = false
+                window.backgroundColor = .clear
+            } else {
+                window.isOpaque = true
+                window.backgroundColor = .windowBackgroundColor
+            }
+        }
     }
 }

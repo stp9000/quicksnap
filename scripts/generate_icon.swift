@@ -4,6 +4,7 @@ import Foundation
 let fileManager = FileManager.default
 let iconsetPath = URL(fileURLWithPath: "Resources/AppIcon.iconset")
 let brandDir = URL(fileURLWithPath: "Resources/Brand")
+let svgMarkPath = brandDir.appendingPathComponent("QuickSnapMark.svg")
 let mark1024Path = brandDir.appendingPathComponent("QuickSnapMark_1024.png")
 try? fileManager.removeItem(at: iconsetPath)
 try fileManager.createDirectory(at: iconsetPath, withIntermediateDirectories: true)
@@ -22,107 +23,15 @@ let variants: [(String, CGFloat)] = [
     ("icon_512x512@2x.png", 1024)
 ]
 
-func drawIcon(size: CGFloat) -> NSImage {
-    let image = NSImage(size: NSSize(width: size, height: size))
-    image.lockFocus()
-
-    let rect = NSRect(x: 0, y: 0, width: size, height: size)
-
-    guard let ctx = NSGraphicsContext.current?.cgContext else {
-        image.unlockFocus()
-        return image
+func drawIcon(size: CGFloat) throws -> NSImage {
+    let source = NSImage(contentsOf: svgMarkPath)
+    guard let baseImage = source else {
+        throw NSError(domain: "icon", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to load QuickSnapMark.svg"])
     }
 
-    ctx.saveGState()
-    ctx.setShouldAntialias(true)
-    ctx.setAllowsAntialiasing(true)
-    ctx.interpolationQuality = .high
-
-    let inset = size * 0.06
-    let bgRect = rect.insetBy(dx: inset, dy: inset)
-    let cornerRadius = size * 0.24
-
-    let bgPath = NSBezierPath(roundedRect: bgRect, xRadius: cornerRadius, yRadius: cornerRadius)
-    bgPath.addClip()
-
-    let startColor = NSColor(calibratedRed: 0.36, green: 0.19, blue: 0.98, alpha: 1) // #5C31FA
-    let endColor = NSColor(calibratedRed: 0.00, green: 0.83, blue: 1.00, alpha: 1)   // #00D4FF
-    let gradient = NSGradient(colors: [startColor, endColor])!
-    gradient.draw(from: CGPoint(x: bgRect.minX, y: bgRect.maxY),
-                  to: CGPoint(x: bgRect.maxX, y: bgRect.minY),
-                  options: [])
-
-    ctx.restoreGState()
-
-    let glyphColor = NSColor(white: 1.0, alpha: 0.96)
-
-    let cameraBodyRect = NSRect(
-        x: size * 0.19,
-        y: size * 0.30,
-        width: size * 0.62,
-        height: size * 0.40
-    )
-    let bodyRadius = size * 0.10
-
-    let cameraTopRect = NSRect(
-        x: cameraBodyRect.minX + size * 0.07,
-        y: cameraBodyRect.maxY - size * 0.02,
-        width: size * 0.22,
-        height: size * 0.11
-    )
-
-    let lensRect = NSRect(
-        x: size * 0.36,
-        y: size * 0.37,
-        width: size * 0.28,
-        height: size * 0.28
-    )
-
-    let glyphPath = NSBezierPath()
-    glyphPath.windingRule = .evenOdd
-    glyphPath.append(NSBezierPath(roundedRect: cameraBodyRect, xRadius: bodyRadius, yRadius: bodyRadius))
-    glyphPath.append(NSBezierPath(roundedRect: cameraTopRect, xRadius: size * 0.06, yRadius: size * 0.06))
-    glyphPath.append(NSBezierPath(ovalIn: lensRect))
-
-    let shadow = NSShadow()
-    shadow.shadowColor = NSColor(white: 0.0, alpha: 0.22)
-    shadow.shadowBlurRadius = size * 0.05
-    shadow.shadowOffset = NSSize(width: 0, height: -size * 0.01)
-
-    NSGraphicsContext.saveGraphicsState()
-    shadow.set()
-    glyphColor.setFill()
-    glyphPath.fill()
-    NSGraphicsContext.restoreGraphicsState()
-
-    // Lens rings for extra definition at small sizes.
-    let ringOuter = NSBezierPath(ovalIn: lensRect.insetBy(dx: size * 0.012, dy: size * 0.012))
-    ringOuter.lineWidth = max(1.5, size * 0.018)
-    NSColor(white: 1.0, alpha: 0.85).setStroke()
-    ringOuter.stroke()
-
-    let ringInner = NSBezierPath(ovalIn: lensRect.insetBy(dx: size * 0.062, dy: size * 0.062))
-    ringInner.lineWidth = max(1.0, size * 0.012)
-    NSColor(calibratedRed: 0.78, green: 0.97, blue: 1.00, alpha: 0.70).setStroke()
-    ringInner.stroke()
-
-    // Spark "snap" indicator.
-    let sparkCenter = CGPoint(x: size * 0.73, y: size * 0.74)
-    let sparkRadius = size * 0.055
-    let spark = NSBezierPath()
-    spark.lineWidth = max(1.5, size * 0.018)
-    spark.lineCapStyle = .round
-    spark.move(to: CGPoint(x: sparkCenter.x - sparkRadius, y: sparkCenter.y))
-    spark.line(to: CGPoint(x: sparkCenter.x + sparkRadius, y: sparkCenter.y))
-    spark.move(to: CGPoint(x: sparkCenter.x, y: sparkCenter.y - sparkRadius))
-    spark.line(to: CGPoint(x: sparkCenter.x, y: sparkCenter.y + sparkRadius))
-    spark.move(to: CGPoint(x: sparkCenter.x - sparkRadius * 0.72, y: sparkCenter.y - sparkRadius * 0.72))
-    spark.line(to: CGPoint(x: sparkCenter.x + sparkRadius * 0.72, y: sparkCenter.y + sparkRadius * 0.72))
-    spark.move(to: CGPoint(x: sparkCenter.x - sparkRadius * 0.72, y: sparkCenter.y + sparkRadius * 0.72))
-    spark.line(to: CGPoint(x: sparkCenter.x + sparkRadius * 0.72, y: sparkCenter.y - sparkRadius * 0.72))
-    NSColor(white: 1.0, alpha: 0.92).setStroke()
-    spark.stroke()
-
+    let image = NSImage(size: NSSize(width: size, height: size))
+    image.lockFocus()
+    baseImage.draw(in: NSRect(x: 0, y: 0, width: size, height: size), from: .zero, operation: .sourceOver, fraction: 1.0)
     image.unlockFocus()
     return image
 }
@@ -137,7 +46,7 @@ func writePNG(_ image: NSImage, to url: URL) throws {
 }
 
 for (name, size) in variants {
-    let image = drawIcon(size: size)
+    let image = try drawIcon(size: size)
     try writePNG(image, to: iconsetPath.appendingPathComponent(name))
 }
 

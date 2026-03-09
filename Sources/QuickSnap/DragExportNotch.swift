@@ -22,7 +22,7 @@ struct DragExportNotch: NSViewRepresentable {
 
 final class DragExportNotchView: NSView, NSDraggingSource {
     weak var document: AnnotationDocument?
-    var skin: AppSkin = .classic
+    var skin: AppSkin = .obsidian
 
     private var trackingArea: NSTrackingArea?
     private var isHovering = false { didSet { needsDisplay = true } }
@@ -94,6 +94,39 @@ final class DragExportNotchView: NSView, NSDraggingSource {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
+        if skin.isModern {
+            drawModern()
+        } else {
+            drawClassic()
+        }
+    }
+
+    private func drawModern() {
+        let notchRect = bounds.insetBy(dx: 1, dy: 1)
+        let radius: CGFloat = 8
+        let notchPath = NSBezierPath(roundedRect: notchRect, xRadius: radius, yRadius: radius)
+
+        // Fill
+        let fillColor: NSColor
+        if isPressed {
+            fillColor = skin.notchPressed
+        } else if isHovering {
+            fillColor = skin.notchHover
+        } else {
+            fillColor = skin.notchResting
+        }
+        fillColor.setFill()
+        notchPath.fill()
+
+        // Subtle border
+        NSColor(white: 1.0, alpha: 0.08).setStroke()
+        notchPath.lineWidth = 1
+        notchPath.stroke()
+
+        drawIcon()
+    }
+
+    private func drawClassic() {
         let notchRect = bounds.insetBy(dx: 1, dy: 1)
         let radius: CGFloat = 3
         let notchPath = NSBezierPath(roundedRect: notchRect, xRadius: radius, yRadius: radius)
@@ -139,7 +172,10 @@ final class DragExportNotchView: NSView, NSDraggingSource {
         rightLine.line(to: NSPoint(x: notchRect.maxX - 0.5, y: notchRect.maxY - radius))
         bevelShd.setStroke(); rightLine.lineWidth = 1; rightLine.stroke()
 
-        // Icon — accent color from skin
+        drawIcon()
+    }
+
+    private func drawIcon() {
         let iconName = "square.and.arrow.up"
         let imageConfig = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
         if let icon = NSImage(systemSymbolName: iconName, accessibilityDescription: "Export"),

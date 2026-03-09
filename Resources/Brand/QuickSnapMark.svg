@@ -1,56 +1,175 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="bg" x1="61.44" y1="962.56" x2="962.56" y2="61.44" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#5C31FA"/>
-      <stop offset="1" stop-color="#00D4FF"/>
+    <clipPath id="roundClip">
+      <rect x="0" y="0" width="1024" height="1024" rx="220" ry="220"/>
+    </clipPath>
+
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#0a0118"/>
+      <stop offset="60%" stop-color="#060010"/>
+      <stop offset="100%" stop-color="#000005"/>
+    </radialGradient>
+
+    <radialGradient id="portalOuter" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ff6af0" stop-opacity="0"/>
+      <stop offset="40%" stop-color="#c026d3" stop-opacity="0.15"/>
+      <stop offset="70%" stop-color="#7c3aed" stop-opacity="0.4"/>
+      <stop offset="85%" stop-color="#4f46e5" stop-opacity="0.7"/>
+      <stop offset="95%" stop-color="#6366f1" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#818cf8" stop-opacity="1"/>
+    </radialGradient>
+
+    <radialGradient id="portalInner" cx="45%" cy="40%" r="55%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="8%" stop-color="#e0f2fe"/>
+      <stop offset="20%" stop-color="#7dd3fc"/>
+      <stop offset="38%" stop-color="#3b82f6"/>
+      <stop offset="55%" stop-color="#1d4ed8"/>
+      <stop offset="72%" stop-color="#312e81"/>
+      <stop offset="88%" stop-color="#1e0a36"/>
+      <stop offset="100%" stop-color="#0a0118"/>
+    </radialGradient>
+
+    <radialGradient id="nebula1" cx="30%" cy="35%" r="40%">
+      <stop offset="0%" stop-color="#f0abfc" stop-opacity="0.6"/>
+      <stop offset="50%" stop-color="#c084fc" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#7c3aed" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="nebula2" cx="70%" cy="65%" r="35%">
+      <stop offset="0%" stop-color="#67e8f9" stop-opacity="0.5"/>
+      <stop offset="50%" stop-color="#22d3ee" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#0891b2" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f0abfc"/>
+      <stop offset="25%" stop-color="#818cf8"/>
+      <stop offset="50%" stop-color="#38bdf8"/>
+      <stop offset="75%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#f0abfc"/>
     </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="-10" stdDeviation="25" flood-color="#000000" flood-opacity="0.22"/>
+
+    <filter id="ringGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="starGlow" x="-200%" y="-200%" width="500%" height="500%">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="coreGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="iconShadow" x="-10%" y="-5%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="20" stdDeviation="30" flood-color="#4f46e5" flood-opacity="0.5"/>
     </filter>
   </defs>
 
-  <rect x="61.44" y="61.44" width="901.12" height="901.12" rx="245.76" fill="url(#bg)"/>
+  <g filter="url(#iconShadow)">
+    <rect x="0" y="0" width="1024" height="1024" rx="220" ry="220" fill="url(#bgGrad)"/>
 
-  <g filter="url(#shadow)">
-    <path fill-rule="evenodd" clip-rule="evenodd" fill="rgba(255,255,255,0.96)" d="
-      M 296.96 307.2
-      H 727.04
-      A 102.4 102.4 0 0 1 829.44 409.6
-      V 614.4
-      A 102.4 102.4 0 0 1 727.04 716.8
-      H 296.96
-      A 102.4 102.4 0 0 1 194.56 614.4
-      V 409.6
-      A 102.4 102.4 0 0 1 296.96 307.2
-      Z
+    <g clip-path="url(#roundClip)">
+      <g opacity="0.06">
+        <line x1="0" y1="170" x2="1024" y2="170" stroke="#818cf8" stroke-width="1"/>
+        <line x1="0" y1="340" x2="1024" y2="340" stroke="#818cf8" stroke-width="1"/>
+        <line x1="0" y1="512" x2="1024" y2="512" stroke="#818cf8" stroke-width="1"/>
+        <line x1="0" y1="682" x2="1024" y2="682" stroke="#818cf8" stroke-width="1"/>
+        <line x1="0" y1="852" x2="1024" y2="852" stroke="#818cf8" stroke-width="1"/>
+        <line x1="170" y1="0" x2="170" y2="1024" stroke="#818cf8" stroke-width="1"/>
+        <line x1="340" y1="0" x2="340" y2="1024" stroke="#818cf8" stroke-width="1"/>
+        <line x1="512" y1="0" x2="512" y2="1024" stroke="#818cf8" stroke-width="1"/>
+        <line x1="682" y1="0" x2="682" y2="1024" stroke="#818cf8" stroke-width="1"/>
+        <line x1="852" y1="0" x2="852" y2="1024" stroke="#818cf8" stroke-width="1"/>
+      </g>
 
-      M 327.68 696.32
-      H 430.08
-      A 61.44 61.44 0 0 1 491.52 757.76
-      V 747.52
-      A 61.44 61.44 0 0 1 430.08 808.96
-      H 327.68
-      A 61.44 61.44 0 0 1 266.24 747.52
-      V 757.76
-      A 61.44 61.44 0 0 1 327.68 696.32
-      Z
+      <g filter="url(#starGlow)">
+        <circle cx="142" cy="98" r="2.5" fill="white" opacity="0.9"/>
+        <circle cx="890" cy="145" r="2" fill="white" opacity="0.85"/>
+        <circle cx="78" cy="380" r="1.8" fill="#c7d2fe" opacity="0.9"/>
+        <circle cx="945" cy="420" r="2.2" fill="white" opacity="0.8"/>
+        <circle cx="200" cy="820" r="2" fill="#bfdbfe" opacity="0.85"/>
+        <circle cx="830" cy="880" r="2.5" fill="white" opacity="0.9"/>
+        <circle cx="105" cy="650" r="1.5" fill="#e9d5ff" opacity="0.8"/>
+        <circle cx="920" cy="700" r="1.8" fill="#bae6fd" opacity="0.85"/>
+        <circle cx="370" cy="60" r="1.5" fill="white" opacity="0.7"/>
+        <circle cx="660" cy="950" r="2" fill="#ddd6fe" opacity="0.8"/>
+        <circle cx="250" cy="150" r="1.2" fill="white" opacity="0.5"/>
+        <circle cx="760" cy="200" r="1" fill="white" opacity="0.45"/>
+        <circle cx="180" cy="500" r="1.3" fill="#e9d5ff" opacity="0.5"/>
+        <circle cx="840" cy="550" r="1.1" fill="white" opacity="0.4"/>
+        <circle cx="300" cy="900" r="1" fill="white" opacity="0.5"/>
+        <circle cx="700" cy="80" r="1.2" fill="#bfdbfe" opacity="0.45"/>
+        <circle cx="60" cy="240" r="1" fill="white" opacity="0.4"/>
+        <circle cx="970" cy="300" r="1.3" fill="white" opacity="0.5"/>
+        <circle cx="450" cy="920" r="1.1" fill="#ddd6fe" opacity="0.45"/>
+        <circle cx="580" cy="40" r="1" fill="white" opacity="0.4"/>
+      </g>
 
-      M 655.36 522.24
-      A 143.36 143.36 0 1 0 368.64 522.24
-      A 143.36 143.36 0 1 0 655.36 522.24
-      Z
-    "/>
+      <circle cx="512" cy="512" r="420" fill="url(#portalOuter)"/>
+      <circle cx="512" cy="512" r="330" fill="url(#portalInner)"/>
+      <circle cx="400" cy="430" r="280" fill="url(#nebula1)" opacity="0.7"/>
+      <circle cx="620" cy="590" r="240" fill="url(#nebula2)" opacity="0.6"/>
+
+      <g opacity="0.25">
+        <ellipse cx="512" cy="512" rx="280" ry="60" fill="none" stroke="#c084fc" stroke-width="35" transform="rotate(-30 512 512)"/>
+        <ellipse cx="512" cy="512" rx="200" ry="45" fill="none" stroke="#67e8f9" stroke-width="25" transform="rotate(50 512 512)"/>
+      </g>
+
+      <circle cx="512" cy="512" r="340" fill="none" stroke="url(#ringGrad)" stroke-width="3.5" opacity="0.5" filter="url(#ringGlow)"/>
+      <circle cx="512" cy="512" r="310" fill="none" stroke="url(#ringGrad)" stroke-width="2" opacity="0.35" filter="url(#ringGlow)"/>
+      <ellipse cx="512" cy="512" rx="330" ry="90" fill="none" stroke="url(#ringGrad)" stroke-width="2.5" opacity="0.3" transform="rotate(15 512 512)" filter="url(#ringGlow)"/>
+      <circle cx="512" cy="512" r="200" fill="none" stroke="#a5f3fc" stroke-width="1.5" opacity="0.4" filter="url(#ringGlow)"/>
+
+      <circle cx="512" cy="512" r="115" fill="#04021a"/>
+      <circle cx="512" cy="512" r="120" fill="none" stroke="#7c3aed" stroke-width="4" opacity="0.6"/>
+      <circle cx="512" cy="512" r="55" fill="#0ea5e9" filter="url(#coreGlow)"/>
+      <circle cx="512" cy="512" r="30" fill="#e0f2fe" filter="url(#coreGlow)"/>
+      <circle cx="512" cy="512" r="12" fill="white"/>
+
+      <g opacity="0.4" filter="url(#ringGlow)">
+        <line x1="512" y1="250" x2="512" y2="480" stroke="#7dd3fc" stroke-width="2" stroke-linecap="round"/>
+        <line x1="512" y1="544" x2="512" y2="774" stroke="#7dd3fc" stroke-width="2" stroke-linecap="round"/>
+        <line x1="250" y1="512" x2="480" y2="512" stroke="#c084fc" stroke-width="2" stroke-linecap="round"/>
+        <line x1="544" y1="512" x2="774" y2="512" stroke="#c084fc" stroke-width="2" stroke-linecap="round"/>
+        <line x1="330" y1="330" x2="455" y2="455" stroke="#f0abfc" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="569" y1="569" x2="694" y2="694" stroke="#f0abfc" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="694" y1="330" x2="569" y2="455" stroke="#67e8f9" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="455" y1="569" x2="330" y2="694" stroke="#67e8f9" stroke-width="1.5" stroke-linecap="round"/>
+      </g>
+
+      <line x1="248" y1="512" x2="440" y2="512" stroke="white" stroke-width="14" stroke-linecap="round"/>
+      <line x1="584" y1="512" x2="776" y2="512" stroke="white" stroke-width="14" stroke-linecap="round"/>
+      <line x1="512" y1="248" x2="512" y2="440" stroke="white" stroke-width="14" stroke-linecap="round"/>
+      <line x1="512" y1="584" x2="512" y2="776" stroke="white" stroke-width="14" stroke-linecap="round"/>
+      <circle cx="512" cy="512" r="64" fill="none" stroke="white" stroke-width="14"/>
+      <circle cx="512" cy="512" r="11" fill="white"/>
+
+      <line x1="90" y1="90" x2="90" y2="190" stroke="white" stroke-width="20" stroke-linecap="round"/>
+      <line x1="90" y1="90" x2="190" y2="90" stroke="white" stroke-width="20" stroke-linecap="round"/>
+      <line x1="934" y1="90" x2="934" y2="190" stroke="white" stroke-width="20" stroke-linecap="round"/>
+      <line x1="934" y1="90" x2="834" y2="90" stroke="white" stroke-width="20" stroke-linecap="round"/>
+      <line x1="90" y1="934" x2="90" y2="834" stroke="white" stroke-width="20" stroke-linecap="round"/>
+      <line x1="90" y1="934" x2="190" y2="934" stroke="white" stroke-width="20" stroke-linecap="round"/>
+      <line x1="934" y1="934" x2="934" y2="834" stroke="white" stroke-width="20" stroke-linecap="round"/>
+      <line x1="934" y1="934" x2="834" y2="934" stroke="white" stroke-width="20" stroke-linecap="round"/>
+    </g>
+
+    <rect x="0" y="0" width="1024" height="1024" rx="220" ry="220" fill="none" stroke="#818cf8" stroke-width="3" opacity="0.25"/>
   </g>
-
-  <circle cx="512" cy="522.24" r="131.04" stroke="rgba(255,255,255,0.85)" stroke-width="18.43"/>
-  <circle cx="512" cy="522.24" r="81.92" stroke="rgba(199,247,255,0.70)" stroke-width="12.29"/>
-
-  <path d="
-    M 691.2 757.76 H 803.84
-    M 747.52 701.44 V 814.08
-    M 706.0 716.24 L 789.04 799.28
-    M 706.0 799.28 L 789.04 716.24
-  " stroke="rgba(255,255,255,0.92)" stroke-width="18.43" stroke-linecap="round"/>
 </svg>
-
