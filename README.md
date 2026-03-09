@@ -1,5 +1,7 @@
 # QuickSnap
 
+![QuickSnap icon](Resources/Brand/QuickSnapMark_readme.png)
+
 QuickSnap is a lightweight macOS screenshot annotation app inspired by Skitch.
 
 ## Features
