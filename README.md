@@ -27,6 +27,19 @@ The first time you capture, macOS will prompt you to allow access in **System Se
 
 Note: Permission usually persists for the installed app. If you install a new unsigned build/version, macOS may ask again.
 
+## Project Structure
+
+- `Sources/QuickSnap/` — Swift source for app logic and UI.
+- `Resources/` — app icon and brand assets.
+- `scripts/` — helper scripts for icon generation and `.app` bundle creation.
+
+## Privacy & Data Handling
+
+- QuickSnap processes screenshots and annotations locally on-device.
+- Captured/edited images are only written to disk when you export or use drag export.
+- Drag export also writes an archive copy under `~/Pictures/QuickSnap`.
+- No network sync or telemetry is implemented in this repository.
+
 ## Development Requirements
 
 - macOS 13+
@@ -55,3 +68,9 @@ You can launch it from Finder or with:
 ```bash
 open build/QuickSnap.app
 ```
+
+## Repository Policies
+
+- [Contributing Guide](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
+- [Pre-Enrollment Repository Audit](REPO_AUDIT.md)
