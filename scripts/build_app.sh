@@ -3,8 +3,11 @@ set -euo pipefail
 
 APP_NAME="QuickSnap"
 BUNDLE_ID="com.quicksnap.app"
-BUILD_VERSION="$(date +%Y.%m.%d.%H%M)"
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+VERSION_FILE="$ROOT_DIR/VERSION"
+DEFAULT_APP_VERSION="$(tr -d '\n' < "$VERSION_FILE")"
+APP_VERSION="${APP_VERSION:-$DEFAULT_APP_VERSION}"
+BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
 cd "$ROOT_DIR"
 
 swift scripts/generate_icon.swift
@@ -35,9 +38,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleVersion</key>
-    <string>${BUILD_VERSION}</string>
+    <string>${BUILD_NUMBER}</string>
     <key>CFBundleShortVersionString</key>
-    <string>${BUILD_VERSION}</string>
+    <string>${APP_VERSION}</string>
     <key>CFBundleExecutable</key>
     <string>${APP_NAME}</string>
     <key>CFBundlePackageType</key>
@@ -46,6 +49,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <string>AppIcon</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>QuickSnap requests access to supported browsers only to capture the current page URL into screenshot metadata.</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
 </dict>

@@ -5,7 +5,6 @@ let fileManager = FileManager.default
 let iconsetPath = URL(fileURLWithPath: "Resources/AppIcon.iconset")
 let brandDir = URL(fileURLWithPath: "Resources/Brand")
 let svgMarkPath = brandDir.appendingPathComponent("QuickSnapMark.svg")
-let mark1024Path = brandDir.appendingPathComponent("QuickSnapMark_1024.png")
 try? fileManager.removeItem(at: iconsetPath)
 try fileManager.createDirectory(at: iconsetPath, withIntermediateDirectories: true)
 try? fileManager.createDirectory(at: brandDir, withIntermediateDirectories: true)
@@ -50,7 +49,4 @@ for (name, size) in variants {
     try writePNG(image, to: iconsetPath.appendingPathComponent(name))
 }
 
-try writePNG(drawIcon(size: 1024), to: mark1024Path)
-
 print("Wrote iconset at \(iconsetPath.path)")
-print("Wrote brand mark at \(mark1024Path.path)")

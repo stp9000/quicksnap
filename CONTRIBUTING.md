@@ -20,6 +20,7 @@ Thanks for contributing.
 - Include a short summary of user-facing changes.
 - If UI changes are made, attach a screenshot.
 - Run local verification before opening a PR.
+- Update `CHANGELOG.md` for user-visible release changes.
 
 ## Local checks
 
@@ -28,6 +29,12 @@ Recommended pre-PR checks:
 ```bash
 swift build
 swift build -c release
+```
+
+For release work, also verify:
+
+```bash
+./scripts/package_release.sh
 ```
 
 ## Coding conventions
@@ -43,3 +50,10 @@ For release-related PRs, include:
 - user-visible changes,
 - migration notes (if any),
 - known limitations.
+
+## Release flow
+
+- The current app version lives in `VERSION`.
+- Use a separate build number for `CFBundleVersion`.
+- Follow the release checklist in `docs/RELEASE.md`.
+- Use `docs/APPLE_READINESS.md` and `docs/GITHUB_SETUP.md` for environment and repository setup tasks.

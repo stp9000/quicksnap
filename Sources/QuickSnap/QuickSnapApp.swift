@@ -9,8 +9,13 @@ struct QuickSnapApp: App {
         WindowGroup {
             ContentView(document: document)
                 .environmentObject(skinManager)
-                .frame(minWidth: 1000, minHeight: 700)
+                .frame(minWidth: 820, minHeight: 620)
                 .preferredColorScheme(skinManager.current.colorScheme)
+        }
+
+        Settings {
+            SettingsView(document: document)
+                .environmentObject(skinManager)
         }
     }
 }

@@ -397,16 +397,14 @@ final class SkinManager: ObservableObject {
 struct WinAmpButtonStyle: ButtonStyle {
     let skin: AppSkin
     var isActive: Bool = false
+    private var toolbarIconColor: Color { Color.white.opacity(skin.isGlass ? 0.82 : 0.9) }
 
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed
 
         configuration.label
-            .foregroundColor(
-                isActive ? skin.accent :
-                pressed  ? skin.accentDim :
-                           skin.iconIdle
-            )
+            .foregroundColor(toolbarIconColor)
+            .opacity(pressed ? 0.75 : 1)
             .frame(minWidth: 28, minHeight: 28)
             .background(
                 ZStack {
@@ -436,16 +434,14 @@ struct WinAmpButtonStyle: ButtonStyle {
 struct ModernButtonStyle: ButtonStyle {
     let skin: AppSkin
     var isActive: Bool = false
+    private var toolbarIconColor: Color { Color.white.opacity(skin.isGlass ? 0.82 : 0.9) }
 
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed
 
         configuration.label
-            .foregroundColor(
-                isActive ? skin.accent :
-                pressed  ? skin.accentDim :
-                           skin.iconIdle
-            )
+            .foregroundColor(toolbarIconColor)
+            .opacity(pressed ? 0.75 : 1)
             .frame(minWidth: 32, minHeight: 32)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)

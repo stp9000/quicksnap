@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Show GitHub CLI
+        run: gh --version
+
+      - name: Validate shell scripts
+        run: bash -n scripts/build_app.sh scripts/package_release.sh scripts/notarize_app.sh
+
+      - name: Derive release metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          FILE_VERSION="$(tr -d '\n' < VERSION)"
+
+          if [[ "$TAG_VERSION" != "$FILE_VERSION" ]]; then
+            echo "Tag version ($TAG_VERSION) does not match VERSION ($FILE_VERSION)." >&2
+            exit 1
+          fi
+
+          BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
+          ARCHIVE_PATH="dist/QuickSnap-v${TAG_VERSION}-macOS-unsigned.zip"
+
+          {
+            echo "tag_version=$TAG_VERSION"
+            echo "build_number=$BUILD_NUMBER"
+            echo "archive_path=$ARCHIVE_PATH"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Extract release notes from changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION_HEADER="## [${{ steps.metadata.outputs.tag_version }}]"
+          awk -v header="$VERSION_HEADER" '
+            index($0, header) == 1 { in_section=1; next }
+            /^## \[/ && in_section { exit }
+            in_section { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+
+          if [[ ! -s RELEASE_NOTES.md ]]; then
+            echo "No changelog entry found for ${{ steps.metadata.outputs.tag_version }}." >&2
+            exit 1
+          fi
+
+      - name: Build release archive
+        env:
+          APP_VERSION: ${{ steps.metadata.outputs.tag_version }}
+          BUILD_NUMBER: ${{ steps.metadata.outputs.build_number }}
+        run: ./scripts/package_release.sh
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE_PATH: ${{ steps.metadata.outputs.archive_path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$ARCHIVE_PATH" --clobber
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "QuickSnap $GITHUB_REF_NAME" \
+              --notes-file RELEASE_NOTES.md \
+              --verify-tag
+          else
+            gh release create "$GITHUB_REF_NAME" "$ARCHIVE_PATH" \
+              --title "QuickSnap $GITHUB_REF_NAME" \
+              --notes-file RELEASE_NOTES.md \
+              --verify-tag
+          fi
