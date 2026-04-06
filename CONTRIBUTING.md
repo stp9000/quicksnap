@@ -55,5 +55,11 @@ For release-related PRs, include:
 
 - The current app version lives in `VERSION`.
 - Use a separate build number for `CFBundleVersion`.
-- Follow the release checklist in `docs/RELEASE.md`.
-- Use `docs/APPLE_READINESS.md` and `docs/GITHUB_SETUP.md` for environment and repository setup tasks.
+- Update `CHANGELOG.md` before tagging a release.
+- Use semantic version tags in the format `v<version>`.
+- Validate release artifacts locally with:
+  ```bash
+  swift build
+  swift build -c release
+  ./scripts/package_release.sh
+  ```
