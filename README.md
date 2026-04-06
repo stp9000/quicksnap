@@ -92,11 +92,22 @@ To create a versioned unsigned zip for releases:
 ./scripts/package_release.sh
 ```
 
+To create a signed, notarized release archive for distribution:
+
+```bash
+BUILD_NUMBER=2026031601 \
+DEVELOPER_ID_APPLICATION="Developer ID Application: Your Name (TEAMID)" \
+NOTARY_PROFILE="quicksnap-notary" \
+./scripts/release_notarized.sh
+```
+
 Brand assets (logo + mark) live in `Resources/Brand/`.
 
 This creates:
 
 - `build/QuickSnap.app`
+- `dist/QuickSnap-v<version>-macOS-unsigned.zip` from `./scripts/package_release.sh`
+- `dist/QuickSnap-v<version>-macOS-notarized.zip` from `./scripts/release_notarized.sh`
 
 You can launch it from Finder or with:
 

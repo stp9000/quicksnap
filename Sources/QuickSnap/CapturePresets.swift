@@ -4,6 +4,11 @@ struct CapturePresetPayload: Codable, Hashable {
     var urlString: String = ""
     var browser: String = ""
     var viewport: String = ""
+    var userAgent: String = ""
+    var referrerURL: String = ""
+    var scriptSources: [String] = []
+    var failedResources: [String] = []
+    var visibleErrors: [String] = []
     var consoleSummary: String = ""
     var errorMessage: String = ""
     var stackTrace: String = ""

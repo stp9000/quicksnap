@@ -32,16 +32,14 @@ struct ContentView: View {
                 exportFooter
             }
             .background(windowBackground)
-
-            if document.isRightPanelVisible {
-                workspacePanel
-                    .frame(minWidth: 280, idealWidth: 360, maxWidth: 460)
-            }
         }
         .background(windowBackground)
         .background(WindowTransparencyHelper(isGlass: skin.isGlass))
         .sheet(isPresented: $document.isWindowPickerPresented) {
             WindowPickerSheet(document: document, skin: skin)
+        }
+        .sheet(isPresented: $document.isBugReportSubmissionSheetPresented) {
+            BugReportSubmissionSheet(document: document, skin: skin)
         }
         .onDeleteCommand {
             document.deleteSelectedAnnotation()
@@ -247,31 +245,43 @@ struct ContentView: View {
     }
 
     private func inspectorFields(for capture: CaptureRecord) -> [InspectorField] {
-        var fields: [InspectorField] = [
+        let baseFields: [InspectorField] = [
             InspectorField(label: "Preset", value: capture.presetDefinition.name),
+            InspectorField(label: "Capture ID", value: capture.sourceDisplayLabel),
             InspectorField(label: "Title", value: capture.displayTitle),
             InspectorField(label: "Source", value: capture.displaySubtitle),
             InspectorField(label: "URL", value: document.selectedCapturePrimaryURLText, isLink: true),
+            InspectorField(label: "Browser", value: capture.presetPayload.browser),
             InspectorField(label: "OCR", value: capture.ocrStatus.displayName),
             InspectorField(label: "Status", value: capture.fileExists ? "Available locally" : "Image file missing")
         ]
 
+        let detailFields: [InspectorField]
         switch capture.normalizedPresetID {
         case "bug_report":
-            fields.append(InspectorField(label: "Browser", value: capture.presetPayload.browser))
-            fields.append(InspectorField(label: "Viewport", value: capture.presetPayload.viewport))
-            fields.append(InspectorField(label: "Console Summary", value: capture.presetPayload.consoleSummary))
-            fields.append(InspectorField(label: "Error Message", value: capture.presetPayload.errorMessage))
-            fields.append(InspectorField(label: "Stack Trace", value: capture.presetPayload.stackTrace))
+            detailFields = [
+                InspectorField(label: "Viewport", value: capture.presetPayload.viewport),
+                InspectorField(label: "Page Title", value: capture.presetPayload.pageTitle),
+                InspectorField(label: "Referrer", value: capture.presetPayload.referrerURL, isLink: true),
+                InspectorField(label: "Console Summary", value: capture.presetPayload.consoleSummary),
+                InspectorField(label: "Error Message", value: capture.presetPayload.errorMessage),
+                InspectorField(label: "Stack Trace", value: capture.presetPayload.stackTrace),
+                InspectorField(label: "Visible Errors", value: capture.presetPayload.visibleErrors.joined(separator: "\n")),
+                InspectorField(label: "Failed Resources", value: capture.presetPayload.failedResources.joined(separator: "\n")),
+                InspectorField(label: "Script Sources", value: capture.presetPayload.scriptSources.joined(separator: "\n"))
+            ]
         default:
             if let custom = capture.presetDefinition.customDefinition {
-                fields.append(contentsOf: custom.fieldNames.map { field in
+                detailFields = custom.fieldNames.map { field in
                     InspectorField(label: field, value: capture.presetPayload.customFields[field, default: ""])
-                })
+                }
+            } else {
+                detailFields = []
             }
         }
 
-        return fields.filter { inspectorShowsAllFields || !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let fields = inspectorShowsAllFields ? baseFields + detailFields : baseFields
+        return fields.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
     @ViewBuilder
@@ -369,22 +379,17 @@ struct ContentView: View {
                     .foregroundColor(skin.accent)
 
                 if let capture = document.selectedCapture {
-                    HStack {
-                        Text(capture.presetDefinition.name)
-                            .font(.caption)
-                            .foregroundColor(skin.textSecondary)
-                        Spacer()
+                    HStack(spacing: 12) {
                         Button("Run Local Analysis") {
                             document.runLocalAnalysisForSelectedCapture()
                         }
-                        .buttonStyle(.borderless)
-                        .foregroundColor(skin.accent)
+                        .buttonStyle(currentButtonStyle())
 
                         Button("Run AI Analysis") {
                             document.runAIAnalysisForSelectedCapture()
                         }
-                        .buttonStyle(.borderless)
-                        .foregroundColor(skin.accent)
+                        .buttonStyle(currentButtonStyle())
+                        .disabled(!document.canRunAIAnalysis)
                     }
 
                     if capture.isAnalysisStale {
@@ -410,39 +415,21 @@ struct ContentView: View {
                             .font(.caption)
                             .foregroundColor(.red.opacity(0.9))
                     case .complete:
-                        analysisTextBlock(label: "Summary", value: capture.analysis.summary)
-                        if !capture.analysis.tags.isEmpty {
-                            analysisTextBlock(label: "Tags", value: capture.analysis.tags.joined(separator: ", "))
-                        }
-                        if !capture.analysis.recommendedActions.isEmpty {
-                            analysisTextBlock(label: "Recommended Actions", value: capture.analysis.recommendedActions.joined(separator: "\n"))
-                        }
-                        if !capture.analysis.severity.isEmpty {
-                            metadataRow(label: "Severity", value: capture.analysis.severity.capitalized)
+                        HStack(spacing: 10) {
+                            if !capture.analysis.severity.isEmpty {
+                                analysisBadge(capture.analysis.severity.capitalized, tint: Color.orange.opacity(0.18), textColor: Color.orange)
+                            }
+                            analysisBadge(capture.presetDefinition.name, tint: skin.accent.opacity(0.14), textColor: skin.accent)
                         }
                         if !capture.analysis.issueTitle.isEmpty {
-                            analysisTextBlock(label: "Issue Title", value: capture.analysis.issueTitle)
+                            analysisHeadlineBlock(label: "Issue Title", value: capture.analysis.issueTitle)
                         }
-                        if !capture.analysis.issueBody.isEmpty {
-                            analysisTextBlock(label: "Issue Draft", value: capture.analysis.issueBody)
+                        analysisHeadlineBlock(label: "Summary", value: capture.analysis.summary)
+                        if !capture.analysis.tags.isEmpty {
+                            analysisTagsBlock(capture.analysis.tags)
                         }
-                        if !capture.analysis.rawJSON.isEmpty {
-                            Group {
-                                Text("Raw Analysis")
-                                    .font(.caption)
-                                    .foregroundColor(skin.textSecondary)
-                                ScrollView {
-                                    Text(capture.analysis.rawJSON)
-                                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                        .foregroundColor(.primary)
-                                        .textSelection(.enabled)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                .frame(minHeight: 120)
-                                .padding(8)
-                                .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            }
+                        if !capture.analysis.recommendedActions.isEmpty {
+                            analysisRecommendedActionsBlock(capture.analysis.recommendedActions)
                         }
                     }
                 } else {
@@ -455,23 +442,75 @@ struct ContentView: View {
         }
     }
 
-    private func analysisTextBlock(label: String, value: String) -> some View {
+    private func analysisHeadlineBlock(label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
                 .font(.caption2)
                 .foregroundColor(skin.textSecondary)
             Text(value.isEmpty ? "Unavailable" : value)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: label == "Issue Title" ? 13 : 12, weight: label == "Issue Title" ? .semibold : .medium))
                 .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
     }
 
+    private func analysisBadge(_ text: String, tint: Color, textColor: Color) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(textColor)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(tint)
+            .clipShape(Capsule())
+    }
+
+    private func analysisTagsBlock(_ tags: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Tags")
+                .font(.caption2)
+                .foregroundColor(skin.textSecondary)
+            FlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
+                ForEach(tags, id: \.self) { tag in
+                    Text(tag)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(skin.textSecondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+            }
+        }
+    }
+
+    private func analysisRecommendedActionsBlock(_ actions: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Recommended Actions")
+                .font(.caption2)
+                .foregroundColor(skin.textSecondary)
+            ForEach(actions, id: \.self) { action in
+                HStack(spacing: 10) {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(skin.accent.opacity(0.7), lineWidth: 1.5)
+                        .frame(width: 18, height: 18)
+                    Text(action)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.primary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 12)
+                .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+    }
+
     private var sendPanelContent: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Send Preview")
+                Text(document.selectedPreviewTitle)
                     .font(skin.primaryFont(size: 13))
                     .foregroundColor(skin.accent)
                 Spacer()
@@ -491,6 +530,18 @@ struct ContentView: View {
                     }
 
                     if document.selectedSendPreviewKind == .githubIssueURL && document.canSendToGitHub {
+                        Button("Review") {
+                            document.openBugReportSubmissionSheet()
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundColor(skin.accent)
+
+                        Button("Copy Screenshot") {
+                            document.copySelectedCaptureImageForGitHub()
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundColor(skin.accent)
+
                         Button("Send to GitHub") {
                             document.openSelectedCaptureGitHubIssue()
                         }
@@ -501,6 +552,11 @@ struct ContentView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 16)
+
+            if let capture = document.selectedCapture {
+                workspaceCaptureHeader(capture: capture)
+                    .padding(.horizontal, 16)
+            }
 
             Picker("Artifact", selection: $document.selectedSendPreviewKind) {
                 Text("File Path").tag(SendPreviewKind.filePath)
@@ -518,16 +574,41 @@ struct ContentView: View {
 
             Group {
                 if let previewText = document.selectedPreviewText {
-                    ScrollView {
-                        Text(previewText)
-                            .font(.system(size: 11, weight: .medium, design: document.selectedSendPreviewKind.usesMonospace ? .monospaced : .default))
-                            .foregroundColor(.primary)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12)
+                    VStack(alignment: .leading, spacing: 10) {
+                        if document.selectedSendPreviewKind == .githubIssueURL {
+                            Text("QuickSnap will copy the current screenshot to your clipboard and open a prefilled GitHub new-issue page with the draft title, body, and labels.")
+                                .font(.caption)
+                                .foregroundColor(skin.textSecondary)
+
+                            if let lastSubmittedIssueURL = document.lastSubmittedIssueURL, !lastSubmittedIssueURL.isEmpty {
+                                Text("Last opened issue URL")
+                                    .font(.caption2)
+                                    .foregroundColor(skin.textSecondary)
+                                Text(lastSubmittedIssueURL)
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundColor(.primary)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+
+                            if let submissionErrorMessage = document.submissionErrorMessage, !submissionErrorMessage.isEmpty {
+                                Text(submissionErrorMessage)
+                                    .font(.caption)
+                                    .foregroundColor(.red.opacity(0.9))
+                            }
+                        }
+
+                        ScrollView {
+                            Text(previewText)
+                                .font(.system(size: 11, weight: .medium, design: document.selectedSendPreviewKind.usesMonospace ? .monospaced : .default))
+                                .foregroundColor(.primary)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                        }
+                        .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
-                    .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .padding(.horizontal, 16)
                     .padding(.bottom, 16)
                 } else if document.selectedCapture == nil {
@@ -545,6 +626,30 @@ struct ContentView: View {
 
             Spacer(minLength: 0)
         }
+    }
+
+    private func workspaceCaptureHeader(capture: CaptureRecord) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(capture.sourceDisplayLabel)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.primary)
+            Text(document.timelineTimestamp(for: capture))
+                .font(.caption2)
+                .foregroundColor(skin.textSecondary)
+            if let primaryURL = capture.primaryURL, !primaryURL.isEmpty, let url = URL(string: primaryURL) {
+                Link(primaryURL, destination: url)
+                    .font(.caption)
+                    .lineLimit(1)
+            } else {
+                Text(capture.displaySubtitle)
+                    .font(.caption)
+                    .foregroundColor(skin.textSecondary)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var canvasViewport: some View {
@@ -621,8 +726,6 @@ struct ContentView: View {
         HStack(spacing: skin.isModern ? 10 : 8) {
             Spacer(minLength: 0)
 
-            presetPicker
-
             iconButton(symbol: "folder", helpText: "Open Image") {
                 document.openImageFromDisk()
             }
@@ -645,19 +748,6 @@ struct ContentView: View {
 
             themeDivider()
 
-            iconButton(symbol: document.isRightPanelVisible ? "sidebar.right" : "sidebar.right", helpText: "Toggle Workspace Panel") {
-                if document.isRightPanelVisible {
-                    document.closeRightPanel()
-                } else {
-                    document.openWorkspacePanel()
-                }
-            }
-
-            iconButton(symbol: "sparkles", helpText: "Show Analyze Panel") {
-                document.showAnalyzePanel()
-            }
-            .disabled(document.selectedCapture == nil)
-
             ForEach(AnnotationTool.allCases) { tool in
                 Button {
                     document.selectedTool = tool
@@ -678,7 +768,7 @@ struct ContentView: View {
             iconButton(symbol: "arrow.uturn.backward", helpText: "Undo Last Annotation") {
                 document.undoLastAnnotation()
             }
-            .disabled(document.strokes.isEmpty && document.shapes.isEmpty)
+            .disabled(document.strokes.isEmpty && document.shapes.isEmpty && document.textAnnotations.isEmpty)
 
             iconButton(symbol: "trash", helpText: "Delete Selected Annotation") {
                 document.deleteSelectedAnnotation()
@@ -856,6 +946,11 @@ struct ContentView: View {
                 Button("Preview Issue Draft") {
                     document.openSendPreview(.issueDraft)
                 }
+
+                Button("Review Bug Report") {
+                    document.openBugReportSubmissionSheet()
+                }
+                .keyboardShortcut("B", modifiers: [.command, .shift])
             }
 
             if document.canSendToGitHub {
@@ -876,7 +971,7 @@ struct ContentView: View {
             }
             .disabled(!document.canCopyCaptureOutputs)
         } label: {
-            Image(systemName: "paperplane")
+            Image(systemName: "square.and.arrow.up")
                 .frame(width: skin.isModern ? 32 : 28, height: skin.isModern ? 32 : 28)
                 .foregroundColor(toolbarIconColor)
         }
@@ -885,7 +980,7 @@ struct ContentView: View {
         .frame(width: skin.isModern ? 32 : 28, height: skin.isModern ? 32 : 28)
         .background(skinPickerBackground)
         .overlay(skinPickerOverlay)
-        .help("Copy Outputs")
+        .help("Share Outputs")
     }
 
     @ViewBuilder
@@ -1161,6 +1256,239 @@ private struct WindowPickerSheet: View {
         .padding(20)
         .frame(minWidth: 420, minHeight: 360)
         .background(skin.isGlass ? AnyView(Rectangle().fill(.thinMaterial)) : AnyView(skin.panelBg))
+    }
+}
+
+private struct BugReportSubmissionSheet: View {
+    @ObservedObject var document: AnnotationDocument
+    let skin: AppSkin
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Review Bug Report")
+                        .font(skin.primaryFont(size: 16))
+                        .foregroundColor(skin.accent)
+                    if let capture = document.selectedCapture {
+                        Text(capture.sourceDisplayLabel)
+                            .font(.caption)
+                            .foregroundColor(skin.textSecondary)
+                    }
+                }
+
+                Spacer()
+
+                Button("Close") {
+                    dismiss()
+                }
+                .buttonStyle(.borderless)
+                .foregroundColor(skin.accent)
+            }
+
+            if let capture = document.selectedCapture {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Capture Context")
+                        .font(.caption)
+                        .foregroundColor(skin.textSecondary)
+                    if let image = document.backgroundImage {
+                        Image(nsImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 160)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(skin.isModern ? skin.border : skin.separator, lineWidth: 1)
+                            )
+                    }
+                    Text(capture.displaySubtitle)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.primary)
+                    Text(document.timelineTimestamp(for: capture))
+                        .font(.caption2)
+                        .foregroundColor(skin.textSecondary)
+                    if let primaryURL = capture.primaryURL, !primaryURL.isEmpty, let url = URL(string: primaryURL) {
+                        Link(primaryURL, destination: url)
+                            .font(.caption)
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
+            Picker("Target", selection: $document.selectedSubmissionTarget) {
+                ForEach(SubmissionTarget.allCases) { target in
+                    Text(target.displayName).tag(target)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Title")
+                    .font(.caption)
+                    .foregroundColor(skin.textSecondary)
+                TextField(
+                    "Issue title",
+                    text: Binding(
+                        get: { document.bugReportDraft.title },
+                        set: { document.bugReportDraft.title = $0 }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Labels")
+                    .font(.caption)
+                    .foregroundColor(skin.textSecondary)
+                TextField(
+                    "bug, ui, regression",
+                    text: Binding(
+                        get: { document.bugReportDraftLabelsText },
+                        set: { document.updateBugReportDraftLabels(from: $0) }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Body")
+                    .font(.caption)
+                    .foregroundColor(skin.textSecondary)
+                TextEditor(
+                    text: Binding(
+                        get: { document.bugReportDraft.body },
+                        set: { document.bugReportDraft.body = $0 }
+                    )
+                )
+                .font(.system(size: 12, design: .monospaced))
+                .frame(minHeight: 280)
+                .padding(8)
+                .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
+            if let submissionErrorMessage = document.submissionErrorMessage, !submissionErrorMessage.isEmpty {
+                Text(submissionErrorMessage)
+                    .font(.caption)
+                    .foregroundColor(.red.opacity(0.9))
+            }
+
+            if let lastSubmittedIssueURL = document.lastSubmittedIssueURL, !lastSubmittedIssueURL.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Last Submitted Issue")
+                        .font(.caption)
+                        .foregroundColor(skin.textSecondary)
+                    Text(lastSubmittedIssueURL)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(.primary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack(spacing: 10) {
+                        Button("Copy URL") {
+                            document.copyLastSubmittedIssueURL()
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundColor(skin.accent)
+
+                        Button("Open URL") {
+                            document.openLastSubmittedIssueURL()
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundColor(skin.accent)
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
+            HStack {
+                Button("Copy Screenshot") {
+                    document.copySelectedCaptureImageForGitHub()
+                }
+                .buttonStyle(.borderless)
+                .foregroundColor(skin.accent)
+
+                Button("Copy Issue Body") {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(document.bugReportDraft.body, forType: .string)
+                    document.statusMessage = "Copied bug report body"
+                }
+                .buttonStyle(.borderless)
+                .foregroundColor(skin.accent)
+
+                Spacer()
+
+                Button(document.selectedSubmissionTarget == .github ? "Send to GitHub" : "Create Jira Issue") {
+                    document.submitCurrentBugReport()
+                    if document.selectedSubmissionTarget == .github {
+                        dismiss()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!document.canSubmitCurrentBugReport || document.isSubmittingBugReport)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 640, minHeight: 720)
+        .background(skin.isGlass ? AnyView(Rectangle().fill(.thinMaterial)) : AnyView(skin.panelBg))
+    }
+}
+
+struct FlowLayout: Layout {
+    var horizontalSpacing: CGFloat = 8
+    var verticalSpacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .greatestFiniteMagnitude
+        var currentX: CGFloat = 0
+        var currentY: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var requiredWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if currentX > 0, currentX + size.width > maxWidth {
+                currentX = 0
+                currentY += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+            requiredWidth = max(requiredWidth, currentX + size.width)
+            rowHeight = max(rowHeight, size.height)
+            currentX += size.width + horizontalSpacing
+        }
+
+        return CGSize(width: requiredWidth, height: currentY + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var currentX = bounds.minX
+        var currentY = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if currentX > bounds.minX, currentX + size.width > bounds.maxX {
+                currentX = bounds.minX
+                currentY += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+            subview.place(
+                at: CGPoint(x: currentX, y: currentY),
+                proposal: ProposedViewSize(width: size.width, height: size.height)
+            )
+            currentX += size.width + horizontalSpacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }
 

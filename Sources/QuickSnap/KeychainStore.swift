@@ -2,15 +2,20 @@ import Foundation
 import Security
 
 enum KeychainStore {
-    private static let service = "com.quicksnap.ai"
-    private static let openAIAccount = "openai_api_key"
+    private static let service = "com.quicksnap.credentials"
 
-    static func saveOpenAIKey(_ value: String) throws {
+    enum Account {
+        static let openAI = "openai_api_key"
+        static let githubPAT = "github_pat"
+        static let jiraToken = "jira_api_token"
+    }
+
+    static func save(_ value: String, account: String) throws {
         let data = Data(value.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: openAIAccount
+            kSecAttrAccount as String: account
         ]
 
         SecItemDelete(query as CFDictionary)
@@ -25,11 +30,11 @@ enum KeychainStore {
         }
     }
 
-    static func loadOpenAIKey() -> String? {
+    static func load(account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: openAIAccount,
+            kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
@@ -44,13 +49,49 @@ enum KeychainStore {
         return string
     }
 
-    static func deleteOpenAIKey() {
+    static func delete(account: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: openAIAccount
+            kSecAttrAccount as String: account
         ]
         SecItemDelete(query as CFDictionary)
+    }
+
+    static func saveOpenAIKey(_ value: String) throws {
+        try save(value, account: Account.openAI)
+    }
+
+    static func loadOpenAIKey() -> String? {
+        load(account: Account.openAI)
+    }
+
+    static func deleteOpenAIKey() {
+        delete(account: Account.openAI)
+    }
+
+    static func saveGitHubPAT(_ value: String) throws {
+        try save(value, account: Account.githubPAT)
+    }
+
+    static func loadGitHubPAT() -> String? {
+        load(account: Account.githubPAT)
+    }
+
+    static func deleteGitHubPAT() {
+        delete(account: Account.githubPAT)
+    }
+
+    static func saveJiraToken(_ value: String) throws {
+        try save(value, account: Account.jiraToken)
+    }
+
+    static func loadJiraToken() -> String? {
+        load(account: Account.jiraToken)
+    }
+
+    static func deleteJiraToken() {
+        delete(account: Account.jiraToken)
     }
 }
 

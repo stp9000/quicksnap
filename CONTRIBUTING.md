@@ -55,9 +55,9 @@ For release-related PRs, include:
 
 - The current app version lives in `VERSION`.
 - Use a separate build number for `CFBundleVersion`.
-- Update `CHANGELOG.md` before tagging a release.
-- Use semantic version tags in the format `v<version>`.
-- Validate release artifacts locally with:
+- Update `CHANGELOG.md` with the release notes for the version being shipped.
+- Tag releases as `v<version>` after release notes are finalized.
+- Validate release packaging locally with:
   ```bash
   swift build
   swift build -c release

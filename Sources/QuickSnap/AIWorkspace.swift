@@ -23,6 +23,64 @@ enum WorkspacePanelMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum SubmissionTarget: String, Codable, CaseIterable, Identifiable {
+    case github
+    case jira
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .github: return "GitHub"
+        case .jira: return "Jira"
+        }
+    }
+}
+
+enum BugReportScreenshotHandlingMode: String, Codable, CaseIterable {
+    case clipboard
+    case localFileReference
+
+    var displayName: String {
+        switch self {
+        case .clipboard: return "Clipboard"
+        case .localFileReference: return "Local File Reference"
+        }
+    }
+}
+
+struct BugReportDraft: Codable, Hashable {
+    var captureID: String = ""
+    var captureDisplayLabel: String = ""
+    var title: String = ""
+    var body: String = ""
+    var labels: [String] = []
+    var target: SubmissionTarget = .github
+    var screenshotHandlingMode: BugReportScreenshotHandlingMode = .clipboard
+
+    var hasContent: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    func githubIssueURL(owner: String, repo: String) -> URL? {
+        let trimmedOwner = owner.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedRepo = repo.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedOwner.isEmpty, !trimmedRepo.isEmpty else { return nil }
+
+        var components = URLComponents(string: "https://github.com/\(trimmedOwner)/\(trimmedRepo)/issues/new")
+        var queryItems = [
+            URLQueryItem(name: "title", value: title),
+            URLQueryItem(name: "body", value: body)
+        ]
+        if !labels.isEmpty {
+            queryItems.append(URLQueryItem(name: "labels", value: labels.joined(separator: ",")))
+        }
+        components?.queryItems = queryItems
+        return components?.url
+    }
+}
+
 enum CaptureChatRole: String, Codable, CaseIterable {
     case user
     case assistant
@@ -242,7 +300,6 @@ enum CaptureAnalysisService {
     fileprivate static func suggestedIssueTitle(for capture: CaptureRecord, summary: String) -> String {
         switch capture.normalizedPresetID {
         case "bug_report":
-            if !capture.analysis.issueTitle.isEmpty { return capture.analysis.issueTitle }
             if !capture.issueDraftTitle.isEmpty { return capture.issueDraftTitle }
             return summary
         default:
@@ -558,7 +615,7 @@ private enum OpenAIAnalysisClient {
     private static func promptForCapture(_ capture: CaptureRecord) -> String {
         let urlLine = capture.primaryURL.map { "URL: \($0)" } ?? "URL: unavailable"
         let issueHint = capture.normalizedPresetID == "bug_report"
-            ? "If applicable, include issue_title, issue_body, and severity."
+            ? "This is a bug-report workflow. Prefer a concrete, actionable issue_title and an issue_body ready for GitHub. If the screenshot suggests a broken or incorrect state, say so plainly."
             : "Issue fields may be empty strings when not relevant."
 
         return """
@@ -574,13 +631,31 @@ private enum OpenAIAnalysisClient {
         Source App: \(capture.sourceApp)
         Window Title: \(capture.windowTitle)
         \(urlLine)
+        Page Title: \(capture.presetPayload.pageTitle)
+        Browser: \(capture.presetPayload.browser)
+        Viewport: \(capture.presetPayload.viewport)
+        User Agent: \(capture.presetPayload.userAgent)
+        Referrer: \(capture.presetPayload.referrerURL)
+        Visible Errors: \(capture.presetPayload.visibleErrors.joined(separator: " | "))
+        Failed Resources: \(capture.presetPayload.failedResources.joined(separator: " | "))
+        Script Sources: \(capture.presetPayload.scriptSources.joined(separator: " | "))
+        Console Summary: \(capture.presetPayload.consoleSummary)
+        Error Message: \(capture.presetPayload.errorMessage)
+        Stack Trace:
+        \(capture.presetPayload.stackTrace)
         OCR Text:
         \(capture.ocrText)
 
         Preset Payload:
         \(String(describing: capture.presetPayload))
 
-        Keep tags concise. Recommended actions should be short imperative phrases. \(issueHint)
+        Keep tags concise. Recommended actions should be short imperative phrases.
+        For bug reports, bias toward:
+        - a specific title that names the broken page, feature, or state
+        - an issue body with sections for summary, observed behavior, reproduction context, and evidence
+        - severity that matches the visible impact and error signals
+        - a full replacement of any previous analysis rather than an appended update
+        \(issueHint)
         """
     }
 }

@@ -58,6 +58,7 @@ struct CaptureRecord: Identifiable, Hashable {
     let ocrStatus: CaptureOCRStatus
     let presetID: String
     let presetPayload: CapturePresetPayload
+    let annotations: PersistedCaptureAnnotations
     let analysis: CaptureAnalysisResult
     let chatMessages: [CaptureChatMessage]
 
@@ -166,8 +167,14 @@ struct CaptureRecord: Identifiable, Hashable {
     var issueDraftTitle: String {
         switch normalizedPresetID {
         case "bug_report":
+            if let visibleError = presetPayload.visibleErrors.first, !visibleError.isEmpty {
+                return trimmedIssueTitlePrefix("Bug: \(visibleError)")
+            }
             if !presetPayload.consoleSummary.isEmpty {
-                return "Bug report: \(presetPayload.consoleSummary)"
+                return trimmedIssueTitlePrefix("Bug: \(presetPayload.consoleSummary)")
+            }
+            if let primaryURL, let host = URL(string: primaryURL)?.host(percentEncoded: false), !host.isEmpty {
+                return "Bug report: issue on \(host)"
             }
             return "Bug report for \(displayTitle)"
         default:
@@ -176,14 +183,82 @@ struct CaptureRecord: Identifiable, Hashable {
     }
 
     var issueDraftBody: String {
+        var lines: [String] = []
+
+        switch normalizedPresetID {
+        case "bug_report":
+            lines.append("## Summary")
+            lines.append(bugReportSummaryText)
+            lines.append("")
+            lines.append("## Observed Behavior")
+            lines.append(contentsOf: bugReportObservedBehaviorLines)
+            lines.append("")
+            lines.append("## Reproduction Context")
+            lines.append(contentsOf: bugReportContextLines)
+            lines.append("")
+            lines.append("## Evidence")
+            lines.append(markdownSnippet)
+            lines.append("")
+            lines.append(contentsOf: bugReportEvidenceLines)
+
+        default:
+            lines = [
+                "## Summary",
+                searchSummary,
+                "",
+                "## Capture",
+                markdownSnippet,
+                "",
+                "- Preset: \(presetDefinition.name)",
+                "- Capture ID: `\(sourceDisplayLabel)`",
+                "- Source: \(displaySubtitle)",
+                "- Captured: \(Self.markdownTimestampFormatter.string(from: createdAt))",
+                "- Dimensions: \(dimensionsText)"
+            ]
+
+            if let primaryURL = primaryURL {
+                lines.append("- URL: \(primaryURL)")
+            }
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private var bugReportSummaryText: String {
+        let candidates = [
+            analysis.summary,
+            presetPayload.consoleSummary,
+            presetPayload.errorMessage,
+            presetPayload.visibleErrors.first ?? "",
+            searchSummary
+        ]
+        return candidates.first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) ?? "Potential bug captured from \(displayTitle)."
+    }
+
+    private var bugReportObservedBehaviorLines: [String] {
+        var lines: [String] = []
+
+        lines.append("The screenshot suggests an unexpected UI or data state that should be reviewed against expected product behavior.")
+
+        if !presetPayload.consoleSummary.isEmpty {
+            lines.append("")
+            lines.append("Console signal: \(presetPayload.consoleSummary)")
+        }
+        if !presetPayload.errorMessage.isEmpty {
+            lines.append("")
+            lines.append("Error message: \(presetPayload.errorMessage)")
+        }
+        if !presetPayload.visibleErrors.isEmpty {
+            lines.append("")
+            lines.append("Visible errors:")
+            lines.append(contentsOf: presetPayload.visibleErrors.map { "- \($0)" })
+        }
+
+        return lines
+    }
+
+    private var bugReportContextLines: [String] {
         var lines: [String] = [
-            "## Summary",
-            searchSummary,
-            "",
-            "## Capture",
-            markdownSnippet,
-            "",
-            "- Preset: \(presetDefinition.name)",
             "- Capture ID: `\(sourceDisplayLabel)`",
             "- Source: \(displaySubtitle)",
             "- Captured: \(Self.markdownTimestampFormatter.string(from: createdAt))",
@@ -193,41 +268,66 @@ struct CaptureRecord: Identifiable, Hashable {
         if let primaryURL = primaryURL {
             lines.append("- URL: \(primaryURL)")
         }
-
-        switch normalizedPresetID {
-        case "bug_report":
-            if !presetPayload.browser.isEmpty {
-                lines.append("- Browser: \(presetPayload.browser)")
-            }
-            if !presetPayload.viewport.isEmpty {
-                lines.append("- Viewport: \(presetPayload.viewport)")
-            }
-            lines.append("- File: `\(imagePath)`")
-            if !tags.isEmpty {
-                lines.append("- Tags: \(tags.joined(separator: ", "))")
-            }
-            if !presetPayload.consoleSummary.isEmpty {
-                lines.append("")
-                lines.append("## Console Summary")
-                lines.append(presetPayload.consoleSummary)
-            }
-            if !presetPayload.errorMessage.isEmpty {
-                lines.append("")
-                lines.append("## Error Message")
-                lines.append(presetPayload.errorMessage)
-            }
-            if !presetPayload.stackTrace.isEmpty {
-                lines.append("")
-                lines.append("## Stack Trace")
-                lines.append("```text")
-                lines.append(presetPayload.stackTrace)
-                lines.append("```")
-            }
-        default:
-            break
+        if !presetPayload.pageTitle.isEmpty {
+            lines.append("- Page Title: \(presetPayload.pageTitle)")
+        }
+        if !presetPayload.browser.isEmpty {
+            lines.append("- Browser: \(presetPayload.browser)")
+        }
+        if !presetPayload.viewport.isEmpty {
+            lines.append("- Viewport: \(presetPayload.viewport)")
+        }
+        if !presetPayload.userAgent.isEmpty {
+            lines.append("- User Agent: \(presetPayload.userAgent)")
+        }
+        if !presetPayload.referrerURL.isEmpty {
+            lines.append("- Referrer: \(presetPayload.referrerURL)")
+        }
+        if !tags.isEmpty {
+            lines.append("- Tags: \(tags.joined(separator: ", "))")
         }
 
-        return lines.joined(separator: "\n")
+        return lines
+    }
+
+    private var bugReportEvidenceLines: [String] {
+        var lines: [String] = [
+            "- File: `\(imagePath)`"
+        ]
+
+        if !presetPayload.stackTrace.isEmpty {
+            lines.append("")
+            lines.append("### Stack Trace")
+            lines.append("```text")
+            lines.append(presetPayload.stackTrace)
+            lines.append("```")
+        }
+        if !presetPayload.failedResources.isEmpty {
+            lines.append("")
+            lines.append("### Failed Resources")
+            lines.append(contentsOf: presetPayload.failedResources.map { "- \($0)" })
+        }
+        if !presetPayload.scriptSources.isEmpty {
+            lines.append("")
+            lines.append("### Script Sources")
+            lines.append(contentsOf: presetPayload.scriptSources.map { "- \($0)" })
+        }
+        if !analysis.recommendedActions.isEmpty {
+            lines.append("")
+            lines.append("### Recommended Next Checks")
+            lines.append(contentsOf: analysis.recommendedActions.map { "- \($0)" })
+        }
+
+        return lines
+    }
+
+    private func trimmedIssueTitlePrefix(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count <= 100 {
+            return trimmed
+        }
+        let index = trimmed.index(trimmed.startIndex, offsetBy: 100)
+        return String(trimmed[..<index]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var jsonExportText: String? {
@@ -264,7 +364,7 @@ struct CaptureRecord: Identifiable, Hashable {
             return markdownDocument
         case .issueDraft:
             guard presetDefinition.exportModes.contains(.issueDraft) else { return nil }
-            return "# \(issueDraftTitle)\n\n\(issueDraftBody)"
+            return "# \(preferredBugReportTitle)\n\n\(preferredBugReportBody)"
         case .githubIssueURL:
             return githubIssueURLString
         }
@@ -274,26 +374,71 @@ struct CaptureRecord: Identifiable, Hashable {
         issueDraftBody
     }
 
-    func githubIssueURL(owner: String, repo: String, labels: String = "") -> URL? {
-        let trimmedOwner = owner.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedRepo = repo.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedOwner.isEmpty, !trimmedRepo.isEmpty else { return nil }
+    func bugReportDraft(
+        defaultLabels: String = "",
+        target: SubmissionTarget = .github,
+        screenshotHandlingMode: BugReportScreenshotHandlingMode = .clipboard
+    ) -> BugReportDraft {
+        let labels = defaultLabels
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
 
-        var components = URLComponents(string: "https://github.com/\(trimmedOwner)/\(trimmedRepo)/issues/new")
-        var queryItems = [
-            URLQueryItem(name: "title", value: issueDraftTitle),
-            URLQueryItem(name: "body", value: githubIssueBody)
-        ]
-        let trimmedLabels = labels.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedLabels.isEmpty {
-            queryItems.append(URLQueryItem(name: "labels", value: trimmedLabels))
-        }
-        components?.queryItems = queryItems
-        return components?.url
+        return BugReportDraft(
+            captureID: id,
+            captureDisplayLabel: sourceDisplayLabel,
+            title: preferredBugReportTitle,
+            body: preferredBugReportBody,
+            labels: labels,
+            target: target,
+            screenshotHandlingMode: screenshotHandlingMode
+        )
+    }
+
+    func githubIssueURL(owner: String, repo: String, labels: String = "") -> URL? {
+        bugReportDraft(defaultLabels: labels).githubIssueURL(owner: owner, repo: repo)
     }
 
     var githubIssueURLString: String? {
         nil
+    }
+
+    var preferredBugReportTitle: String {
+        if hasAnalysis, !analysis.issueTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return analysis.issueTitle
+        }
+        return issueDraftTitle
+    }
+
+    var preferredBugReportBody: String {
+        if hasAnalysis, !analysis.issueBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return analysis.issueBody
+        }
+        return githubIssueBody
+    }
+
+    func withAnnotations(_ annotations: PersistedCaptureAnnotations) -> CaptureRecord {
+        CaptureRecord(
+            id: id,
+            displaySequence: displaySequence,
+            imagePath: imagePath,
+            createdAt: createdAt,
+            sourceApp: sourceApp,
+            windowTitle: windowTitle,
+            urlString: urlString,
+            ocrText: ocrText,
+            tags: tags,
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight,
+            sourceKind: sourceKind,
+            showsSelectionBorder: showsSelectionBorder,
+            ocrStatus: ocrStatus,
+            presetID: presetID,
+            presetPayload: presetPayload,
+            annotations: annotations,
+            analysis: analysis,
+            chatMessages: chatMessages
+        )
     }
 
     static let markdownTimestampFormatter: DateFormatter = {
@@ -325,14 +470,6 @@ struct CaptureRecord: Identifiable, Hashable {
         if let primaryURL {
             lines.append("- URL: \(primaryURL)")
         }
-        if !ocrText.isEmpty {
-            lines.append("")
-            lines.append("## OCR Text")
-            lines.append("")
-            lines.append("```text")
-            lines.append(ocrText)
-            lines.append("```")
-        }
         return lines.joined(separator: "\n")
     }
 
@@ -348,18 +485,15 @@ struct CaptureRecord: Identifiable, Hashable {
             markdownSnippet,
             "",
             "- Suggested image name: `\(imageName)`",
-            primaryURL.map { "- URL: \($0)" },
-            !ocrText.isEmpty ? "" : nil,
-            !ocrText.isEmpty ? "### OCR Text" : nil,
-            !ocrText.isEmpty ? ocrText : nil
+            primaryURL.map { "- URL: \($0)" }
         ].compactMap { $0 }.joined(separator: "\n")
     }
 
     private var issueDraftMarkdown: String {
         [
-            "# \(issueDraftTitle)",
+            "# \(preferredBugReportTitle)",
             "",
-            issueDraftBody
+            preferredBugReportBody
         ].joined(separator: "\n")
     }
 
@@ -412,6 +546,11 @@ struct FrontmostCaptureContext {
 struct BrowserDebugMetadata {
     let pageTitle: String
     let viewport: String
+    let userAgent: String
+    let referrerURL: String
+    let scriptSources: [String]
+    let failedResources: [String]
+    let visibleErrors: [String]
 }
 
 struct WindowCaptureOption: Identifiable, Hashable {
@@ -492,6 +631,7 @@ final class CaptureRepository {
             ocrStatus: draft.ocrStatus,
             presetID: draft.presetID,
             presetPayload: draft.presetPayload,
+            annotations: PersistedCaptureAnnotations(),
             analysis: CaptureAnalysisResult(),
             chatMessages: []
         )
@@ -499,8 +639,8 @@ final class CaptureRepository {
         try withDatabase { db in
             let sql = """
             INSERT OR REPLACE INTO captures
-            (id, display_sequence, image_path, created_at, source_app, window_title, url_string, ocr_text, tags, pixel_width, pixel_height, source_kind, shows_selection_border, ocr_status, preset_id, payload_json, analysis_status, analysis_preset_id, analysis_updated_at, analysis_summary, analysis_tags, analysis_recommended_actions, analysis_issue_title, analysis_issue_body, analysis_severity, analysis_raw_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            (id, display_sequence, image_path, created_at, source_app, window_title, url_string, ocr_text, tags, pixel_width, pixel_height, source_kind, shows_selection_border, ocr_status, preset_id, payload_json, annotations_json, analysis_status, analysis_preset_id, analysis_updated_at, analysis_summary, analysis_tags, analysis_recommended_actions, analysis_issue_title, analysis_issue_body, analysis_severity, analysis_raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -524,16 +664,17 @@ final class CaptureRepository {
             bindText(record.ocrStatus.rawValue, to: 14, in: statement)
             bindText(record.normalizedPresetID, to: 15, in: statement)
             bindText(encodedPayloadString(for: record.presetPayload), to: 16, in: statement)
-            bindText(record.analysis.status.rawValue, to: 17, in: statement)
-            bindText(record.analysis.presetID, to: 18, in: statement)
-            bindOptionalText(record.analysis.updatedAt.map(Self.iso8601Formatter.string(from:)), to: 19, in: statement)
-            bindText(record.analysis.summary, to: 20, in: statement)
-            bindText(record.analysis.tags.joined(separator: "\n"), to: 21, in: statement)
-            bindText(record.analysis.recommendedActions.joined(separator: "\n"), to: 22, in: statement)
-            bindText(record.analysis.issueTitle, to: 23, in: statement)
-            bindText(record.analysis.issueBody, to: 24, in: statement)
-            bindText(record.analysis.severity, to: 25, in: statement)
-            bindText(record.analysis.rawJSON, to: 26, in: statement)
+            bindText(encodedAnnotationsString(for: record.annotations), to: 17, in: statement)
+            bindText(record.analysis.status.rawValue, to: 18, in: statement)
+            bindText(record.analysis.presetID, to: 19, in: statement)
+            bindOptionalText(record.analysis.updatedAt.map(Self.iso8601Formatter.string(from:)), to: 20, in: statement)
+            bindText(record.analysis.summary, to: 21, in: statement)
+            bindText(record.analysis.tags.joined(separator: "\n"), to: 22, in: statement)
+            bindText(record.analysis.recommendedActions.joined(separator: "\n"), to: 23, in: statement)
+            bindText(record.analysis.issueTitle, to: 24, in: statement)
+            bindText(record.analysis.issueBody, to: 25, in: statement)
+            bindText(record.analysis.severity, to: 26, in: statement)
+            bindText(record.analysis.rawJSON, to: 27, in: statement)
 
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw CaptureRepositoryError.executeFailed(lastErrorMessage(db))
@@ -549,13 +690,13 @@ final class CaptureRepository {
             let sql: String
             if trimmedQuery.isEmpty {
                 sql = """
-                SELECT id, display_sequence, image_path, created_at, source_app, window_title, url_string, ocr_text, tags, pixel_width, pixel_height, source_kind, shows_selection_border, ocr_status, preset_id, payload_json, analysis_status, analysis_preset_id, analysis_updated_at, analysis_summary, analysis_tags, analysis_recommended_actions, analysis_issue_title, analysis_issue_body, analysis_severity, analysis_raw_json
+                SELECT id, display_sequence, image_path, created_at, source_app, window_title, url_string, ocr_text, tags, pixel_width, pixel_height, source_kind, shows_selection_border, ocr_status, preset_id, payload_json, annotations_json, analysis_status, analysis_preset_id, analysis_updated_at, analysis_summary, analysis_tags, analysis_recommended_actions, analysis_issue_title, analysis_issue_body, analysis_severity, analysis_raw_json
                 FROM captures
                 ORDER BY datetime(created_at) DESC;
                 """
             } else {
                 sql = """
-                SELECT id, display_sequence, image_path, created_at, source_app, window_title, url_string, ocr_text, tags, pixel_width, pixel_height, source_kind, shows_selection_border, ocr_status, preset_id, payload_json, analysis_status, analysis_preset_id, analysis_updated_at, analysis_summary, analysis_tags, analysis_recommended_actions, analysis_issue_title, analysis_issue_body, analysis_severity, analysis_raw_json
+                SELECT id, display_sequence, image_path, created_at, source_app, window_title, url_string, ocr_text, tags, pixel_width, pixel_height, source_kind, shows_selection_border, ocr_status, preset_id, payload_json, annotations_json, analysis_status, analysis_preset_id, analysis_updated_at, analysis_summary, analysis_tags, analysis_recommended_actions, analysis_issue_title, analysis_issue_body, analysis_severity, analysis_raw_json
                 FROM captures
                 WHERE lower(id) LIKE lower(?)
                    OR lower(source_app) LIKE lower(?)
@@ -587,6 +728,7 @@ final class CaptureRepository {
             var records: [CaptureRecord] = []
             while sqlite3_step(statement) == SQLITE_ROW {
                 let payloadJSON = stringValue(at: 15, in: statement)
+                let annotationsJSON = stringValue(at: 16, in: statement)
                 records.append(
                     CaptureRecord(
                         id: stringValue(at: 0, in: statement),
@@ -605,17 +747,18 @@ final class CaptureRepository {
                         ocrStatus: CaptureOCRStatus(rawValue: stringValue(at: 13, in: statement)) ?? .pending,
                         presetID: stringValue(at: 14, in: statement).isEmpty ? "general" : stringValue(at: 14, in: statement),
                         presetPayload: decodedPayload(from: payloadJSON),
+                        annotations: decodedAnnotations(from: annotationsJSON),
                         analysis: decodedAnalysis(
-                            status: stringValue(at: 16, in: statement),
-                            presetID: stringValue(at: 17, in: statement),
-                            updatedAt: optionalStringValue(at: 18, in: statement),
-                            summary: stringValue(at: 19, in: statement),
-                            tags: stringValue(at: 20, in: statement),
-                            recommendedActions: stringValue(at: 21, in: statement),
-                            issueTitle: stringValue(at: 22, in: statement),
-                            issueBody: stringValue(at: 23, in: statement),
-                            severity: stringValue(at: 24, in: statement),
-                            rawJSON: stringValue(at: 25, in: statement)
+                            status: stringValue(at: 17, in: statement),
+                            presetID: stringValue(at: 18, in: statement),
+                            updatedAt: optionalStringValue(at: 19, in: statement),
+                            summary: stringValue(at: 20, in: statement),
+                            tags: stringValue(at: 21, in: statement),
+                            recommendedActions: stringValue(at: 22, in: statement),
+                            issueTitle: stringValue(at: 23, in: statement),
+                            issueBody: stringValue(at: 24, in: statement),
+                            severity: stringValue(at: 25, in: statement),
+                            rawJSON: stringValue(at: 26, in: statement)
                         ),
                         chatMessages: (try? listChatMessages(for: stringValue(at: 0, in: statement))) ?? []
                     )
@@ -731,6 +874,24 @@ final class CaptureRepository {
         }
     }
 
+    func updateAnnotations(for captureID: String, annotations: PersistedCaptureAnnotations) throws {
+        try withDatabase { db in
+            let sql = "UPDATE captures SET annotations_json = ? WHERE id = ?;"
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw CaptureRepositoryError.prepareFailed(lastErrorMessage(db))
+            }
+            defer { sqlite3_finalize(statement) }
+
+            bindText(encodedAnnotationsString(for: annotations), to: 1, in: statement)
+            bindText(captureID, to: 2, in: statement)
+
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw CaptureRepositoryError.executeFailed(lastErrorMessage(db))
+            }
+        }
+    }
+
     func listChatMessages(for captureID: String) throws -> [CaptureChatMessage] {
         try withDatabase { db in
             let sql = """
@@ -807,6 +968,7 @@ final class CaptureRepository {
                 ocr_status TEXT NOT NULL DEFAULT 'pending',
                 preset_id TEXT NOT NULL DEFAULT 'general',
                 payload_json TEXT NOT NULL DEFAULT '{}',
+                annotations_json TEXT NOT NULL DEFAULT '{}',
                 analysis_status TEXT NOT NULL DEFAULT 'idle',
                 analysis_preset_id TEXT NOT NULL DEFAULT '',
                 analysis_updated_at TEXT,
@@ -840,6 +1002,7 @@ final class CaptureRepository {
                 "ALTER TABLE captures ADD COLUMN ocr_status TEXT NOT NULL DEFAULT 'pending';",
                 "ALTER TABLE captures ADD COLUMN preset_id TEXT NOT NULL DEFAULT 'general';",
                 "ALTER TABLE captures ADD COLUMN payload_json TEXT NOT NULL DEFAULT '{}';",
+                "ALTER TABLE captures ADD COLUMN annotations_json TEXT NOT NULL DEFAULT '{}';",
                 "ALTER TABLE captures ADD COLUMN analysis_status TEXT NOT NULL DEFAULT 'idle';",
                 "ALTER TABLE captures ADD COLUMN analysis_preset_id TEXT NOT NULL DEFAULT '';",
                 "ALTER TABLE captures ADD COLUMN analysis_updated_at TEXT;",
@@ -908,6 +1071,22 @@ final class CaptureRepository {
             return CapturePresetPayload()
         }
         return payload
+    }
+
+    private func encodedAnnotationsString(for annotations: PersistedCaptureAnnotations) -> String {
+        guard let data = try? encoder.encode(annotations),
+              let string = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return string
+    }
+
+    private func decodedAnnotations(from string: String) -> PersistedCaptureAnnotations {
+        guard let data = string.data(using: .utf8),
+              let annotations = try? decoder.decode(PersistedCaptureAnnotations.self, from: data) else {
+            return PersistedCaptureAnnotations()
+        }
+        return annotations
     }
 
     private func decodedAnalysis(status: String, presetID: String, updatedAt: String?, summary: String, tags: String, recommendedActions: String, issueTitle: String, issueBody: String, severity: String, rawJSON: String) -> CaptureAnalysisResult {
@@ -1173,9 +1352,8 @@ enum BrowserDebugMetadataResolver {
             let script = """
             tell application "Safari"
                 if (count of windows) is 0 then return ""
-                set pageTitle to name of current tab of front window
-                set viewportSize to do JavaScript "window.innerWidth + 'x' + window.innerHeight" in current tab of front window
-                return pageTitle & "||" & viewportSize
+                set debugJSON to do JavaScript "JSON.stringify((() => { const textPool = Array.from(document.querySelectorAll('body, [role=alert], .error, .errors, .alert, .warning, .toast, .notice')).map(el => (el.innerText || '').trim()).join('\\n'); const lines = textPool.split(/\\n+/).map(line => line.trim()).filter(Boolean); const errorLines = lines.filter(line => /error|warning|failed|exception|invalid|unable|denied|not found/i.test(line)).slice(0, 5); const failedResources = performance.getEntriesByType('resource').map(entry => entry.name).filter(Boolean).slice(-5); const scriptSources = Array.from(document.scripts).map(script => script.src).filter(Boolean).slice(0, 8); return { pageTitle: document.title || '', viewport: window.innerWidth + 'x' + window.innerHeight, userAgent: navigator.userAgent || '', referrerURL: document.referrer || '', scriptSources, failedResources, visibleErrors: errorLines }; })())" in current tab of front window
+                return debugJSON
             end tell
             """
             return run(script: script)
@@ -1188,9 +1366,8 @@ enum BrowserDebugMetadataResolver {
         let script = """
         tell application "\(context.sourceApp)"
             if (count of windows) is 0 then return ""
-            set pageTitle to title of active tab of front window
-            set viewportSize to execute active tab of front window javascript "window.innerWidth + 'x' + window.innerHeight"
-            return pageTitle & "||" & viewportSize
+            set debugJSON to execute active tab of front window javascript "JSON.stringify((() => { const textPool = Array.from(document.querySelectorAll('body, [role=alert], .error, .errors, .alert, .warning, .toast, .notice')).map(el => (el.innerText || '').trim()).join('\\n'); const lines = textPool.split(/\\n+/).map(line => line.trim()).filter(Boolean); const errorLines = lines.filter(line => /error|warning|failed|exception|invalid|unable|denied|not found/i.test(line)).slice(0, 5); const failedResources = performance.getEntriesByType('resource').map(entry => entry.name).filter(Boolean).slice(-5); const scriptSources = Array.from(document.scripts).map(script => script.src).filter(Boolean).slice(0, 8); return { pageTitle: document.title || '', viewport: window.innerWidth + 'x' + window.innerHeight, userAgent: navigator.userAgent || '', referrerURL: document.referrer || '', scriptSources, failedResources, visibleErrors: errorLines }; })())"
+            return debugJSON
         end tell
         """
         return run(script: script)
@@ -1205,10 +1382,38 @@ enum BrowserDebugMetadataResolver {
         }
         let value = result.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !value.isEmpty else { return nil }
-        let parts = value.components(separatedBy: "||")
-        let title = parts.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let viewport = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
-        return BrowserDebugMetadata(pageTitle: title, viewport: viewport)
+        guard let data = value.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        let title = (json["pageTitle"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let viewport = (json["viewport"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let userAgent = (json["userAgent"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let referrerURL = (json["referrerURL"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let scriptSources = (json["scriptSources"] as? [String] ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let failedResources = (json["failedResources"] as? [String] ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let visibleErrors = (json["visibleErrors"] as? [String] ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        if title.isEmpty && viewport.isEmpty && userAgent.isEmpty && referrerURL.isEmpty && scriptSources.isEmpty && failedResources.isEmpty && visibleErrors.isEmpty {
+            return nil
+        }
+
+        return BrowserDebugMetadata(
+            pageTitle: title,
+            viewport: viewport,
+            userAgent: userAgent,
+            referrerURL: referrerURL,
+            scriptSources: scriptSources,
+            failedResources: failedResources,
+            visibleErrors: visibleErrors
+        )
     }
 }
 

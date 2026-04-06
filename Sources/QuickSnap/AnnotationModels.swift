@@ -28,6 +28,7 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
     case pen = "Pen"
     case rectangle = "Rectangle"
     case arrow = "Arrow"
+    case text = "Text"
 
     var id: String { rawValue }
 
@@ -36,24 +37,25 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
         case .pen: return "pencil.tip"
         case .rectangle: return "rectangle"
         case .arrow: return "arrow.up.right"
+        case .text: return "textformat"
         }
     }
 }
 
 struct Stroke: Identifiable {
-    let id = UUID()
+    var id = UUID()
     var points: [CGPoint]
     var color: NSColor
     var lineWidth: CGFloat
 }
 
-enum ShapeKind {
+enum ShapeKind: String, Codable {
     case rectangle
     case arrow
 }
 
 struct ShapeAnnotation: Identifiable {
-    let id = UUID()
+    var id = UUID()
     var kind: ShapeKind
     var start: CGPoint
     var end: CGPoint
@@ -61,9 +63,57 @@ struct ShapeAnnotation: Identifiable {
     var lineWidth: CGFloat
 }
 
+struct TextAnnotation: Identifiable {
+    var id = UUID()
+    var text: String
+    var position: CGPoint
+    var color: NSColor
+    var fontSize: CGFloat
+}
+
+struct PersistedCaptureAnnotations: Codable, Hashable {
+    var strokes: [PersistedStroke] = []
+    var shapes: [PersistedShape] = []
+    var texts: [PersistedTextAnnotation] = []
+
+    var isEmpty: Bool {
+        strokes.isEmpty && shapes.isEmpty && texts.isEmpty
+    }
+}
+
+struct PersistedPoint: Codable, Hashable {
+    var x: Double
+    var y: Double
+}
+
+struct PersistedStroke: Codable, Hashable {
+    var id: String
+    var points: [PersistedPoint]
+    var colorHex: String
+    var lineWidth: Double
+}
+
+struct PersistedShape: Codable, Hashable {
+    var id: String
+    var kind: ShapeKind
+    var start: PersistedPoint
+    var end: PersistedPoint
+    var colorHex: String
+    var lineWidth: Double
+}
+
+struct PersistedTextAnnotation: Codable, Hashable {
+    var id: String
+    var text: String
+    var position: PersistedPoint
+    var colorHex: String
+    var fontSize: Double
+}
+
 enum SelectedAnnotation: Equatable {
     case stroke(UUID)
     case shape(UUID)
+    case text(UUID)
 }
 
 @MainActor
@@ -71,11 +121,17 @@ final class AnnotationDocument: ObservableObject {
     private static let annotationColorDefaultsKey = "quicksnap.annotationColorHex"
     private static let captureStoragePathDefaultsKey = "quicksnap.captureStorageRootPath"
     private static let selectedPresetDefaultsKey = "quicksnap.selectedPresetID"
+    private static let aiFeaturesEnabledDefaultsKey = "quicksnap.ai.enabled"
     private static let aiUsesPersonalKeyDefaultsKey = "quicksnap.ai.usesPersonalKey"
+    private static let autoComposeBugReportsDefaultsKey = "quicksnap.ai.autoComposeBugReports"
     private static let openAIModelDefaultsKey = "quicksnap.ai.openaiModel"
     private static let githubOwnerDefaultsKey = "quicksnap.github.owner"
     private static let githubRepoDefaultsKey = "quicksnap.github.repo"
     private static let githubLabelsDefaultsKey = "quicksnap.github.labels"
+    private static let jiraDomainDefaultsKey = "quicksnap.jira.domain"
+    private static let jiraEmailDefaultsKey = "quicksnap.jira.email"
+    private static let jiraProjectKeyDefaultsKey = "quicksnap.jira.projectKey"
+    private static let jiraIssueTypeDefaultsKey = "quicksnap.jira.issueType"
 
     private static let timestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -102,6 +158,7 @@ final class AnnotationDocument: ObservableObject {
     @Published var lineWidth: CGFloat = 4
     @Published var strokes: [Stroke] = []
     @Published var shapes: [ShapeAnnotation] = []
+    @Published var textAnnotations: [TextAnnotation] = []
     @Published private(set) var captures: [CaptureRecord] = []
     @Published private(set) var presetDefinitions: [CapturePresetDefinition] = []
     @Published var selectedCaptureID: String?
@@ -123,6 +180,16 @@ final class AnnotationDocument: ObservableObject {
     @Published var isRightPanelVisible = false
     @Published var rightPanelMode: WorkspacePanelMode = .analyze
     @Published var selectedSendPreviewKind: SendPreviewKind = .markdownDocument
+    @Published var selectedSubmissionTarget: SubmissionTarget = .github {
+        didSet {
+            bugReportDraft.target = selectedSubmissionTarget
+        }
+    }
+    @Published var bugReportDraft = BugReportDraft()
+    @Published var isBugReportSubmissionSheetPresented = false
+    @Published var isSubmittingBugReport = false
+    @Published var submissionErrorMessage: String?
+    @Published var lastSubmittedIssueURL: String?
     @Published var analysisErrorMessage: String?
     @Published var chatErrorMessage: String?
     @Published var chatInputText = ""
@@ -130,9 +197,19 @@ final class AnnotationDocument: ObservableObject {
     @Published private(set) var selectedCaptureChatMessages: [CaptureChatMessage] = []
     @Published var aiSettingsStatusMessage: String?
     @Published var isTestingOpenAIConnection = false
+    @Published var aiFeaturesEnabled = true {
+        didSet {
+            UserDefaults.standard.set(aiFeaturesEnabled, forKey: Self.aiFeaturesEnabledDefaultsKey)
+        }
+    }
     @Published var aiUsesPersonalKey = false {
         didSet {
             UserDefaults.standard.set(aiUsesPersonalKey, forKey: Self.aiUsesPersonalKeyDefaultsKey)
+        }
+    }
+    @Published var autoComposeBugReports = false {
+        didSet {
+            UserDefaults.standard.set(autoComposeBugReports, forKey: Self.autoComposeBugReportsDefaultsKey)
         }
     }
     @Published var openAIModel = "gpt-4o-mini" {
@@ -142,6 +219,8 @@ final class AnnotationDocument: ObservableObject {
     }
     @Published var openAIKeyDraft = ""
     @Published private(set) var hasSavedOpenAIKey = false
+    @Published var githubPATDraft = ""
+    @Published private(set) var hasSavedGitHubPAT = false
     @Published var githubOwner = "" {
         didSet { UserDefaults.standard.set(githubOwner, forKey: Self.githubOwnerDefaultsKey) }
     }
@@ -151,6 +230,20 @@ final class AnnotationDocument: ObservableObject {
     @Published var githubLabels = "" {
         didSet { UserDefaults.standard.set(githubLabels, forKey: Self.githubLabelsDefaultsKey) }
     }
+    @Published var jiraDomain = "" {
+        didSet { UserDefaults.standard.set(jiraDomain, forKey: Self.jiraDomainDefaultsKey) }
+    }
+    @Published var jiraEmail = "" {
+        didSet { UserDefaults.standard.set(jiraEmail, forKey: Self.jiraEmailDefaultsKey) }
+    }
+    @Published var jiraProjectKey = "" {
+        didSet { UserDefaults.standard.set(jiraProjectKey, forKey: Self.jiraProjectKeyDefaultsKey) }
+    }
+    @Published var jiraIssueType = "Bug" {
+        didSet { UserDefaults.standard.set(jiraIssueType, forKey: Self.jiraIssueTypeDefaultsKey) }
+    }
+    @Published var jiraTokenDraft = ""
+    @Published private(set) var hasSavedJiraToken = false
     @Published var customPresetNameDraft = ""
     @Published var customPresetFieldsDraft = ""
     @Published var customPresetTemplateDraft = """
@@ -163,6 +256,7 @@ final class AnnotationDocument: ObservableObject {
 
     private var annotationHistory: [SelectedAnnotation] = []
     private var allCaptures: [CaptureRecord] = []
+    private var pendingAutoOpenSubmissionCaptureID: String?
     private let defaultExportDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Pictures", isDirectory: true)
         .appendingPathComponent("QuickSnap", isDirectory: true)
@@ -171,18 +265,31 @@ final class AnnotationDocument: ObservableObject {
     init() {
         captureRepository = buildCaptureRepository()
         selectedPresetID = UserDefaults.standard.string(forKey: Self.selectedPresetDefaultsKey) ?? "general"
+        if UserDefaults.standard.object(forKey: Self.aiFeaturesEnabledDefaultsKey) == nil {
+            aiFeaturesEnabled = true
+        } else {
+            aiFeaturesEnabled = UserDefaults.standard.bool(forKey: Self.aiFeaturesEnabledDefaultsKey)
+        }
         aiUsesPersonalKey = UserDefaults.standard.bool(forKey: Self.aiUsesPersonalKeyDefaultsKey)
+        autoComposeBugReports = UserDefaults.standard.bool(forKey: Self.autoComposeBugReportsDefaultsKey)
         openAIModel = UserDefaults.standard.string(forKey: Self.openAIModelDefaultsKey) ?? "gpt-4o-mini"
         hasSavedOpenAIKey = KeychainStore.loadOpenAIKey() != nil
+        hasSavedGitHubPAT = KeychainStore.loadGitHubPAT() != nil
         githubOwner = UserDefaults.standard.string(forKey: Self.githubOwnerDefaultsKey) ?? ""
         githubRepo = UserDefaults.standard.string(forKey: Self.githubRepoDefaultsKey) ?? ""
         githubLabels = UserDefaults.standard.string(forKey: Self.githubLabelsDefaultsKey) ?? ""
+        jiraDomain = UserDefaults.standard.string(forKey: Self.jiraDomainDefaultsKey) ?? ""
+        jiraEmail = UserDefaults.standard.string(forKey: Self.jiraEmailDefaultsKey) ?? ""
+        jiraProjectKey = UserDefaults.standard.string(forKey: Self.jiraProjectKeyDefaultsKey) ?? ""
+        jiraIssueType = UserDefaults.standard.string(forKey: Self.jiraIssueTypeDefaultsKey) ?? "Bug"
+        hasSavedJiraToken = KeychainStore.loadJiraToken() != nil
 
         if let savedHex = UserDefaults.standard.string(forKey: Self.annotationColorDefaultsKey) {
             color = NSColor(hex: savedHex)
         }
 
         reloadPresetDefinitions()
+        resetBugReportDraft()
 
         if captureRepository == nil {
             libraryErrorMessage = "QuickSnap could not initialize its local capture library."
@@ -239,6 +346,7 @@ final class AnnotationDocument: ObservableObject {
     var canCopyCaptureOutputs: Bool { selectedCapture != nil }
     var canCopyImage: Bool { backgroundImage != nil }
     var canAnalyzeSelectedCapture: Bool { selectedCapture != nil }
+    var canRunAIAnalysis: Bool { aiFeaturesEnabled && selectedCapture != nil }
     var canExportIssueDraft: Bool {
         guard let selectedCapture else { return false }
         return selectedCapture.presetDefinition.exportModes.contains(.issueDraft)
@@ -248,6 +356,24 @@ final class AnnotationDocument: ObservableObject {
         return selectedCapture.presetDefinition.exportModes.contains(.githubIssueURL)
             && !githubOwner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !githubRepo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var canSubmitToJira: Bool {
+        selectedCapture != nil &&
+            !jiraDomain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !jiraEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !jiraProjectKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !jiraIssueType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            hasSavedJiraToken
+    }
+
+    var canSubmitCurrentBugReport: Bool {
+        switch selectedSubmissionTarget {
+        case .github:
+            return canSendToGitHub
+        case .jira:
+            return canSubmitToJira
+        }
     }
 
     var captureLibraryPathText: String {
@@ -271,10 +397,10 @@ final class AnnotationDocument: ObservableObject {
     }
 
     var selectedPreviewText: String? {
-        guard let selectedCapture else { return nil }
         if selectedSendPreviewKind == .githubIssueURL {
-            return selectedCapture.githubIssueURL(owner: githubOwner, repo: githubRepo, labels: githubLabels)?.absoluteString
+            return bugReportDraft.githubIssueURL(owner: githubOwner, repo: githubRepo)?.absoluteString
         }
+        guard let selectedCapture else { return nil }
         return selectedCapture.previewText(for: selectedSendPreviewKind)
     }
 
@@ -283,14 +409,29 @@ final class AnnotationDocument: ObservableObject {
     }
 
     var savedOpenAIKeySummary: String {
-        hasSavedOpenAIKey ? "Personal OpenAI key saved in Keychain" : "No OpenAI API key saved"
+        if !aiFeaturesEnabled {
+            return "AI features are disabled. QuickSnap stays local-only."
+        }
+        return hasSavedOpenAIKey ? "Personal OpenAI key saved in Keychain" : "No OpenAI API key saved"
     }
 
-    func clearAnnotations() {
+    var savedGitHubPATSummary: String {
+        hasSavedGitHubPAT ? "GitHub PAT saved in Keychain for future API mode" : "No GitHub PAT saved"
+    }
+
+    var savedJiraTokenSummary: String {
+        hasSavedJiraToken ? "Jira API token saved in Keychain" : "No Jira API token saved"
+    }
+
+    func clearAnnotations(persist: Bool = true) {
         strokes.removeAll()
         shapes.removeAll()
+        textAnnotations.removeAll()
         selectedAnnotation = nil
         annotationHistory.removeAll()
+        if persist {
+            persistAnnotationsForSelectedCapture()
+        }
     }
 
     func loadImage(_ image: NSImage, capture: CaptureRecord? = nil, showsSelectionBorder: Bool = false) {
@@ -299,12 +440,13 @@ final class AnnotationDocument: ObservableObject {
         selectedCaptureTagsText = capture?.tags.joined(separator: ", ") ?? ""
         selectedCapturePayload = capture?.presetPayload ?? CapturePresetPayload()
         selectedCaptureChatMessages = capture?.chatMessages ?? []
+        seedBugReportDraft(from: capture)
         self.showsSelectionBorder = showsSelectionBorder
         let size = image.size
         if size.width > 0, size.height > 0 {
             canvasSize = size
         }
-        clearAnnotations()
+        applyPersistedAnnotations(capture?.annotations)
     }
 
     func refreshCaptureLibrary(preserving captureID: String? = nil) {
@@ -327,6 +469,7 @@ final class AnnotationDocument: ObservableObject {
         selectedCaptureTagsText = capture.tags.joined(separator: ", ")
         selectedCapturePayload = capture.presetPayload
         selectedCaptureChatMessages = capture.chatMessages
+        seedBugReportDraft(from: capture)
         chatInputText = ""
         chatErrorMessage = nil
 
@@ -334,7 +477,7 @@ final class AnnotationDocument: ObservableObject {
             backgroundImage = nil
             canvasSize = CGSize(width: 1280, height: 800)
             showsSelectionBorder = capture.showsSelectionBorder
-            clearAnnotations()
+            clearAnnotations(persist: false)
             statusMessage = "The image for this capture is missing."
             return
         }
@@ -348,6 +491,17 @@ final class AnnotationDocument: ObservableObject {
         isRightPanelVisible = true
     }
 
+    func prepareBugReportDraftForSelectedCapture() {
+        seedBugReportDraft(from: selectedCapture)
+    }
+
+    func openBugReportSubmissionSheet() {
+        guard selectedCapture != nil else { return }
+        prepareBugReportDraftForSelectedCapture()
+        submissionErrorMessage = nil
+        isBugReportSubmissionSheetPresented = true
+    }
+
     func showAnalyzePanel() {
         rightPanelMode = .analyze
         isRightPanelVisible = true
@@ -355,6 +509,9 @@ final class AnnotationDocument: ObservableObject {
 
     func openSendPreview(_ kind: SendPreviewKind) {
         guard selectedCapture != nil else { return }
+        if kind == .githubIssueURL {
+            prepareBugReportDraftForSelectedCapture()
+        }
         selectedSendPreviewKind = kind
         rightPanelMode = .send
         isRightPanelVisible = true
@@ -365,6 +522,11 @@ final class AnnotationDocument: ObservableObject {
     }
 
     func runAIAnalysisForSelectedCapture() {
+        guard aiFeaturesEnabled else {
+            analysisErrorMessage = "AI features are disabled in Settings."
+            statusMessage = "AI features are disabled"
+            return
+        }
         runAnalysisForSelectedCapture(useAI: true)
     }
 
@@ -456,7 +618,54 @@ final class AnnotationDocument: ObservableObject {
         statusMessage = "Removed OpenAI API key"
     }
 
+    func saveGitHubPAT() {
+        let trimmed = githubPATDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        do {
+            try KeychainStore.saveGitHubPAT(trimmed)
+            hasSavedGitHubPAT = true
+            githubPATDraft = ""
+            statusMessage = "Saved GitHub PAT"
+        } catch {
+            statusMessage = "QuickSnap could not save the GitHub PAT."
+        }
+    }
+
+    func removeGitHubPAT() {
+        KeychainStore.deleteGitHubPAT()
+        hasSavedGitHubPAT = false
+        githubPATDraft = ""
+        statusMessage = "Removed GitHub PAT"
+    }
+
+    func saveJiraToken() {
+        let trimmed = jiraTokenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        do {
+            try KeychainStore.saveJiraToken(trimmed)
+            hasSavedJiraToken = true
+            jiraTokenDraft = ""
+            statusMessage = "Saved Jira API token"
+        } catch {
+            statusMessage = "QuickSnap could not save the Jira API token."
+        }
+    }
+
+    func removeJiraToken() {
+        KeychainStore.deleteJiraToken()
+        hasSavedJiraToken = false
+        jiraTokenDraft = ""
+        statusMessage = "Removed Jira API token"
+    }
+
     func testOpenAIConnection() {
+        guard aiFeaturesEnabled else {
+            analysisErrorMessage = "Enable AI features first."
+            aiSettingsStatusMessage = "Enable AI features first."
+            return
+        }
         guard let configuration = openAIConfiguration else {
             analysisErrorMessage = "Save an OpenAI API key first."
             aiSettingsStatusMessage = "Save an OpenAI API key first."
@@ -613,12 +822,12 @@ final class AnnotationDocument: ObservableObject {
         }
     }
 
-    func copyRenderedImageToPasteboard() {
+    func copyRenderedImageToPasteboard(statusText: String = "Copied image to clipboard") {
         guard let renderedImage = renderAnnotatedImage().tiffRepresentation else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setData(renderedImage, forType: .tiff)
-        statusMessage = "Copied image to clipboard"
+        statusMessage = statusText
     }
 
     func copyCurrentCaptureFilePath() {
@@ -676,21 +885,134 @@ final class AnnotationDocument: ObservableObject {
     }
 
     func openSelectedCaptureGitHubIssue() {
-        guard let selectedCapture,
-              let url = selectedCapture.githubIssueURL(owner: githubOwner, repo: githubRepo, labels: githubLabels) else {
+        prepareBugReportDraftForSelectedCapture()
+        submitCurrentBugReportDraftToGitHub()
+    }
+
+    func submitCurrentBugReportDraftToGitHub() {
+        guard let url = bugReportDraft.githubIssueURL(owner: githubOwner, repo: githubRepo) else {
             statusMessage = "Configure a GitHub owner and repo first."
+            submissionErrorMessage = statusMessage
             return
         }
 
+        isSubmittingBugReport = true
+        copyRenderedImageToPasteboard(statusText: "Copied screenshot for GitHub")
         NSWorkspace.shared.open(url)
-        statusMessage = "Opened GitHub issue draft"
+        isSubmittingBugReport = false
+        lastSubmittedIssueURL = url.absoluteString
+        submissionErrorMessage = nil
+        statusMessage = "Copied screenshot and opened GitHub issue draft"
+    }
+
+    func copyLastSubmittedIssueURL() {
+        guard let lastSubmittedIssueURL, !lastSubmittedIssueURL.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(lastSubmittedIssueURL, forType: .string)
+        statusMessage = "Copied submitted issue URL"
+    }
+
+    func openLastSubmittedIssueURL() {
+        guard let lastSubmittedIssueURL, let url = URL(string: lastSubmittedIssueURL) else { return }
+        NSWorkspace.shared.open(url)
+        statusMessage = "Opened submitted issue"
+    }
+
+    func submitCurrentBugReport() {
+        switch selectedSubmissionTarget {
+        case .github:
+            submitCurrentBugReportDraftToGitHub()
+        case .jira:
+            submitCurrentBugReportToJira()
+        }
+    }
+
+    func submitCurrentBugReportToJira() {
+        guard canSubmitToJira else {
+            submissionErrorMessage = "Complete Jira settings and save a Jira API token first."
+            statusMessage = "Jira settings are incomplete"
+            return
+        }
+        guard let token = KeychainStore.loadJiraToken() else {
+            submissionErrorMessage = "Save a Jira API token first."
+            statusMessage = "No Jira API token saved"
+            return
+        }
+
+        let title = bugReportDraft.title
+        let body = bugReportDraft.body
+        let domain = jiraDomain
+        let email = jiraEmail
+        let projectKey = jiraProjectKey
+        let issueType = jiraIssueType
+        let screenshotData = renderPNGDataForExport()
+        let screenshotName = defaultExportFilename
+
+        isSubmittingBugReport = true
+        submissionErrorMessage = nil
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                let issue = try await JiraClient.createIssue(
+                    domain: domain,
+                    email: email,
+                    token: token,
+                    projectKey: projectKey,
+                    issueType: issueType,
+                    summary: title,
+                    description: body
+                )
+
+                if let screenshotData {
+                    try await JiraClient.attachFile(
+                        domain: domain,
+                        email: email,
+                        token: token,
+                        issueKey: issue.key,
+                        imageData: screenshotData,
+                        filename: screenshotName
+                    )
+                }
+
+                await MainActor.run {
+                    self.isSubmittingBugReport = false
+                    self.lastSubmittedIssueURL = issue.browseURL.absoluteString
+                    self.submissionErrorMessage = nil
+                    self.statusMessage = "Created Jira issue \(issue.key)"
+                    NSWorkspace.shared.open(issue.browseURL)
+                }
+            } catch {
+                await MainActor.run {
+                    self.isSubmittingBugReport = false
+                    self.submissionErrorMessage = self.readableSubmissionError(error)
+                    self.statusMessage = "Jira submission failed"
+                }
+            }
+        }
+    }
+
+    func copySelectedCaptureImageForGitHub() {
+        guard selectedCapture != nil else { return }
+        copyRenderedImageToPasteboard(statusText: "Copied screenshot for GitHub")
+    }
+
+    func updateBugReportDraftLabels(from value: String) {
+        bugReportDraft.labels = value
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    var bugReportDraftLabelsText: String {
+        bugReportDraft.labels.joined(separator: ", ")
     }
 
     func copyIssueDraftToPasteboard() {
         guard let selectedCapture else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString("# \(selectedCapture.issueDraftTitle)\n\n\(selectedCapture.issueDraftBody)", forType: .string)
+        pasteboard.setString("# \(selectedCapture.preferredBugReportTitle)\n\n\(selectedCapture.preferredBugReportBody)", forType: .string)
         statusMessage = "Copied issue draft"
     }
 
@@ -775,6 +1097,7 @@ final class AnnotationDocument: ObservableObject {
                     ocrStatus: existing.ocrStatus,
                     presetID: existing.presetID,
                     presetPayload: existing.presetPayload,
+                    annotations: existing.annotations,
                     analysis: existing.analysis,
                     chatMessages: existing.chatMessages
                 )
@@ -798,6 +1121,7 @@ final class AnnotationDocument: ObservableObject {
                     ocrStatus: existing.ocrStatus,
                     presetID: existing.presetID,
                     presetPayload: existing.presetPayload,
+                    annotations: existing.annotations,
                     analysis: existing.analysis,
                     chatMessages: existing.chatMessages
                 )
@@ -896,8 +1220,11 @@ final class AnnotationDocument: ObservableObject {
             strokes.removeAll { $0.id == id }
         case .shape(let id):
             shapes.removeAll { $0.id == id }
+        case .text(let id):
+            textAnnotations.removeAll { $0.id == id }
         }
         selectedAnnotation = nil
+        persistAnnotationsForSelectedCapture()
     }
 
     func deleteSelectedAnnotation() {
@@ -909,8 +1236,12 @@ final class AnnotationDocument: ObservableObject {
         case .shape(let id):
             shapes.removeAll { $0.id == id }
             annotationHistory.removeAll { $0 == .shape(id) }
+        case .text(let id):
+            textAnnotations.removeAll { $0.id == id }
+            annotationHistory.removeAll { $0 == .text(id) }
         }
         selectedAnnotation = nil
+        persistAnnotationsForSelectedCapture()
     }
 
     func selectAnnotation(at point: CGPoint) {
@@ -920,6 +1251,10 @@ final class AnnotationDocument: ObservableObject {
         }
         if let shape = shapes.last(where: { pointHitsShape(point, shape: $0) }) {
             selectedAnnotation = .shape(shape.id)
+            return
+        }
+        if let text = textAnnotations.last(where: { pointHitsText(point, textAnnotation: $0) }) {
+            selectedAnnotation = .text(text.id)
             return
         }
         selectedAnnotation = nil
@@ -985,6 +1320,10 @@ final class AnnotationDocument: ObservableObject {
             refreshCaptureLibrary(preserving: record.id)
             openCapture(record)
             statusMessage = "Saved \(record.presetDefinition.name) capture"
+            if record.normalizedPresetID == "bug_report", autoComposeBugReports, aiFeaturesEnabled {
+                pendingAutoOpenSubmissionCaptureID = record.id
+                runAIAnalysisForSelectedCapture()
+            }
             scheduleOCR(for: record)
         } catch {
             libraryErrorMessage = "QuickSnap could not save the captured image."
@@ -1036,6 +1375,11 @@ final class AnnotationDocument: ObservableObject {
                 await MainActor.run {
                     self.refreshCaptureLibrary(preserving: selectedCapture.id)
                     self.statusMessage = useAI && configuration != nil ? "AI analysis ready" : "Local analysis ready"
+                    if self.pendingAutoOpenSubmissionCaptureID == selectedCapture.id {
+                        self.pendingAutoOpenSubmissionCaptureID = nil
+                        self.prepareBugReportDraftForSelectedCapture()
+                        self.isBugReportSubmissionSheetPresented = true
+                    }
                 }
             } catch {
                 let failed = CaptureAnalysisResult(
@@ -1055,6 +1399,11 @@ final class AnnotationDocument: ObservableObject {
                     self.analysisErrorMessage = self.readableAnalysisError(error)
                     self.statusMessage = "Analysis failed"
                     self.refreshCaptureLibrary(preserving: selectedCapture.id)
+                    if self.pendingAutoOpenSubmissionCaptureID == selectedCapture.id {
+                        self.pendingAutoOpenSubmissionCaptureID = nil
+                        self.prepareBugReportDraftForSelectedCapture()
+                        self.isBugReportSubmissionSheetPresented = true
+                    }
                 }
             }
         }
@@ -1083,10 +1432,12 @@ final class AnnotationDocument: ObservableObject {
             selectedCaptureTagsText = selectedCapture.tags.joined(separator: ", ")
             selectedCapturePayload = selectedCapture.presetPayload
             selectedCaptureChatMessages = selectedCapture.chatMessages
+            seedBugReportDraft(from: selectedCapture)
         } else {
             selectedCaptureTagsText = ""
             selectedCapturePayload = CapturePresetPayload()
             selectedCaptureChatMessages = []
+            resetBugReportDraft()
         }
     }
 
@@ -1107,7 +1458,7 @@ final class AnnotationDocument: ObservableObject {
         } else {
             backgroundImage = nil
             canvasSize = CGSize(width: 1280, height: 800)
-            clearAnnotations()
+            clearAnnotations(persist: false)
         }
     }
 
@@ -1118,7 +1469,8 @@ final class AnnotationDocument: ObservableObject {
     }
 
     private var openAIConfiguration: OpenAIAnalysisConfiguration? {
-        guard aiUsesPersonalKey,
+        guard aiFeaturesEnabled,
+              aiUsesPersonalKey,
               let key = KeychainStore.loadOpenAIKey(),
               !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
@@ -1164,6 +1516,21 @@ final class AnnotationDocument: ObservableObject {
             if payload.viewport.isEmpty {
                 payload.viewport = browserMetadata.viewport
             }
+            if payload.userAgent.isEmpty {
+                payload.userAgent = browserMetadata.userAgent
+            }
+            if payload.referrerURL.isEmpty {
+                payload.referrerURL = browserMetadata.referrerURL
+            }
+            if payload.scriptSources.isEmpty {
+                payload.scriptSources = browserMetadata.scriptSources
+            }
+            if payload.failedResources.isEmpty {
+                payload.failedResources = browserMetadata.failedResources
+            }
+            if payload.visibleErrors.isEmpty {
+                payload.visibleErrors = browserMetadata.visibleErrors
+            }
         }
         return payload
     }
@@ -1187,6 +1554,37 @@ final class AnnotationDocument: ObservableObject {
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    private func seedBugReportDraft(from capture: CaptureRecord?) {
+        guard let capture else {
+            resetBugReportDraft()
+            return
+        }
+
+        bugReportDraft = capture.bugReportDraft(
+            defaultLabels: githubLabels,
+            target: selectedSubmissionTarget,
+            screenshotHandlingMode: .clipboard
+        )
+    }
+
+    private func resetBugReportDraft() {
+        bugReportDraft = BugReportDraft(target: selectedSubmissionTarget)
+    }
+
+    private func readableSubmissionError(_ error: Error) -> String {
+        if let jiraError = error as? JiraClientError {
+            switch jiraError {
+            case .invalidDomain:
+                return "QuickSnap could not build the Jira API URL from the configured domain."
+            case .badResponse:
+                return "Jira returned an unexpected response."
+            case .apiError(let message):
+                return message
+            }
+        }
+        return error.localizedDescription
     }
 
     private func matchesActiveFilter(_ capture: CaptureRecord) -> Bool {
@@ -1222,6 +1620,7 @@ final class AnnotationDocument: ObservableObject {
         }
         for stroke in strokes { drawStroke(stroke, highlighted: false) }
         for shape in shapes { drawShape(shape, highlighted: false) }
+        for text in textAnnotations { drawTextAnnotation(text, highlighted: false) }
         output.unlockFocus()
         return output
     }
@@ -1280,6 +1679,15 @@ final class AnnotationDocument: ObservableObject {
         }
     }
 
+    private func drawTextAnnotation(_ annotation: TextAnnotation, highlighted: Bool) {
+        let point = renderPoint(annotation.position)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: annotation.fontSize, weight: .semibold),
+            .foregroundColor: highlighted ? NSColor.systemBlue : annotation.color
+        ]
+        NSString(string: annotation.text).draw(at: point, withAttributes: attributes)
+    }
+
     private func pointHitsStroke(_ point: CGPoint, stroke: Stroke) -> Bool {
         guard stroke.points.count > 1 else { return false }
         let threshold = max(8, stroke.lineWidth + 4)
@@ -1307,6 +1715,16 @@ final class AnnotationDocument: ObservableObject {
         case .arrow:
             return distanceFromPoint(point, toSegmentStart: shape.start, end: shape.end) <= max(10, shape.lineWidth + 4)
         }
+    }
+
+    private func pointHitsText(_ point: CGPoint, textAnnotation: TextAnnotation) -> Bool {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: textAnnotation.fontSize, weight: .semibold)
+        ]
+        let size = NSString(string: textAnnotation.text).size(withAttributes: attributes)
+        let rect = CGRect(x: textAnnotation.position.x, y: textAnnotation.position.y, width: size.width, height: size.height)
+            .insetBy(dx: -8, dy: -6)
+        return rect.contains(point)
     }
 
     private func distanceFromPoint(_ point: CGPoint, toSegmentStart a: CGPoint, end b: CGPoint) -> CGFloat {
@@ -1372,6 +1790,7 @@ final class AnnotationDocument: ObservableObject {
         strokes.append(stroke)
         annotationHistory.append(.stroke(stroke.id))
         selectedAnnotation = nil
+        persistAnnotationsForSelectedCapture()
     }
 
     func addShape(kind: ShapeKind, start: CGPoint, end: CGPoint) {
@@ -1379,6 +1798,143 @@ final class AnnotationDocument: ObservableObject {
         shapes.append(shape)
         annotationHistory.append(.shape(shape.id))
         selectedAnnotation = nil
+        persistAnnotationsForSelectedCapture()
+    }
+
+    func addTextAnnotation(_ text: String, at position: CGPoint) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let annotation = TextAnnotation(
+            text: trimmed,
+            position: position,
+            color: color,
+            fontSize: max(14, lineWidth * 5)
+        )
+        textAnnotations.append(annotation)
+        annotationHistory.append(.text(annotation.id))
+        selectedAnnotation = nil
+        persistAnnotationsForSelectedCapture()
+    }
+
+    func moveSelectedTextAnnotation(to position: CGPoint) {
+        guard case .text(let id) = selectedAnnotation,
+              let index = textAnnotations.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        textAnnotations[index].position = position
+        persistAnnotationsForSelectedCapture()
+    }
+
+    func updateSelectedTextAnnotation(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              case .text(let id) = selectedAnnotation,
+              let index = textAnnotations.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        textAnnotations[index].text = trimmed
+        persistAnnotationsForSelectedCapture()
+    }
+
+    func selectedTextAnnotation() -> TextAnnotation? {
+        guard case .text(let id) = selectedAnnotation else { return nil }
+        return textAnnotations.first(where: { $0.id == id })
+    }
+
+    private func applyPersistedAnnotations(_ persisted: PersistedCaptureAnnotations?) {
+        guard let persisted else {
+            clearAnnotations(persist: false)
+            return
+        }
+
+        strokes = persisted.strokes.map { stroke in
+            Stroke(
+                id: UUID(uuidString: stroke.id) ?? UUID(),
+                points: stroke.points.map { CGPoint(x: $0.x, y: $0.y) },
+                color: NSColor(hex: stroke.colorHex),
+                lineWidth: CGFloat(stroke.lineWidth)
+            )
+        }
+        shapes = persisted.shapes.map { shape in
+            ShapeAnnotation(
+                id: UUID(uuidString: shape.id) ?? UUID(),
+                kind: shape.kind,
+                start: CGPoint(x: shape.start.x, y: shape.start.y),
+                end: CGPoint(x: shape.end.x, y: shape.end.y),
+                color: NSColor(hex: shape.colorHex),
+                lineWidth: CGFloat(shape.lineWidth)
+            )
+        }
+        textAnnotations = persisted.texts.map { text in
+            TextAnnotation(
+                id: UUID(uuidString: text.id) ?? UUID(),
+                text: text.text,
+                position: CGPoint(x: text.position.x, y: text.position.y),
+                color: NSColor(hex: text.colorHex),
+                fontSize: CGFloat(text.fontSize)
+            )
+        }
+        selectedAnnotation = nil
+        annotationHistory.removeAll()
+    }
+
+    private func persistAnnotationsForSelectedCapture() {
+        guard let captureRepository, let selectedCaptureID else { return }
+        do {
+            try captureRepository.updateAnnotations(
+                for: selectedCaptureID,
+                annotations: currentPersistedAnnotations()
+            )
+            updateCachedCaptureAnnotations(for: selectedCaptureID, annotations: currentPersistedAnnotations())
+        } catch {
+            libraryErrorMessage = "QuickSnap could not save annotations for this capture."
+        }
+    }
+
+    private func currentPersistedAnnotations() -> PersistedCaptureAnnotations {
+        PersistedCaptureAnnotations(
+            strokes: strokes.compactMap { stroke in
+                guard let colorHex = rgbHexString(for: stroke.color) else { return nil }
+                return PersistedStroke(
+                    id: stroke.id.uuidString,
+                    points: stroke.points.map { PersistedPoint(x: $0.x, y: $0.y) },
+                    colorHex: colorHex,
+                    lineWidth: Double(stroke.lineWidth)
+                )
+            },
+            shapes: shapes.compactMap { shape in
+                guard let colorHex = rgbHexString(for: shape.color) else { return nil }
+                return PersistedShape(
+                    id: shape.id.uuidString,
+                    kind: shape.kind,
+                    start: PersistedPoint(x: shape.start.x, y: shape.start.y),
+                    end: PersistedPoint(x: shape.end.x, y: shape.end.y),
+                    colorHex: colorHex,
+                    lineWidth: Double(shape.lineWidth)
+                )
+            },
+            texts: textAnnotations.compactMap { text in
+                guard let colorHex = rgbHexString(for: text.color) else { return nil }
+                return PersistedTextAnnotation(
+                    id: text.id.uuidString,
+                    text: text.text,
+                    position: PersistedPoint(x: text.position.x, y: text.position.y),
+                    colorHex: colorHex,
+                    fontSize: Double(text.fontSize)
+                )
+            }
+        )
+    }
+
+    private func updateCachedCaptureAnnotations(for captureID: String, annotations: PersistedCaptureAnnotations) {
+        allCaptures = allCaptures.map { record in
+            guard record.id == captureID else { return record }
+            return record.withAnnotations(annotations)
+        }
+        captures = captures.map { record in
+            guard record.id == captureID else { return record }
+            return record.withAnnotations(annotations)
+        }
     }
 }
 
@@ -1396,6 +1952,15 @@ private func enrichedPayload(for capture: CaptureRecord, recognizedText: String)
        let consoleSummary = ConsoleSignalExtractor.extractSummary(from: recognizedText) {
         payload.consoleSummary = consoleSummary
         didChange = true
+    }
+
+    if capture.normalizedPresetID == "bug_report",
+       payload.visibleErrors.isEmpty {
+        let visibleErrors = VisibleErrorExtractor.extract(from: recognizedText)
+        if !visibleErrors.isEmpty {
+            payload.visibleErrors = visibleErrors
+            didChange = true
+        }
     }
 
     return didChange ? payload : nil
@@ -1430,5 +1995,30 @@ private enum ConsoleSignalExtractor {
 
         guard !matches.isEmpty else { return nil }
         return matches.prefix(3).joined(separator: "\n")
+    }
+}
+
+private enum VisibleErrorExtractor {
+    private static let keywordSignals = [
+        "error",
+        "warning",
+        "failed",
+        "unable",
+        "invalid",
+        "exception",
+        "denied",
+        "not found"
+    ]
+
+    static func extract(from text: String) -> [String] {
+        Array(text
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { line in
+                let lowered = line.lowercased()
+                return keywordSignals.contains(where: { lowered.contains($0) })
+            }
+            .prefix(5))
     }
 }
