@@ -6,14 +6,17 @@ struct ContentView: View {
     @EnvironmentObject var skinManager: SkinManager
     @StateObject private var colorPanel = ColorPanelCoordinator()
     @State private var inspectorShowsAllFields = false
+    @State private var isHistorySidebarVisible = true
 
     private var skin: AppSkin { skinManager.current }
     private var toolbarIconColor: Color { Color.white.opacity(skin.isGlass ? 0.82 : 0.9) }
 
     var body: some View {
         HSplitView {
-            historySidebar
-                .frame(minWidth: 240, idealWidth: 290, maxWidth: 340)
+            if isHistorySidebarVisible {
+                historySidebar
+                    .frame(minWidth: 240, idealWidth: 290, maxWidth: 420)
+            }
 
             VStack(spacing: 0) {
                 toolBar
@@ -23,7 +26,7 @@ struct ContentView: View {
                     .frame(height: 1)
 
                 canvasViewport
-                .background(canvasBackground)
+                    .background(canvasBackground)
 
                 Rectangle()
                     .fill(skin.isModern ? skin.border : skin.separator)
@@ -31,7 +34,13 @@ struct ContentView: View {
 
                 exportFooter
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(windowBackground)
+
+            if document.isRightPanelVisible {
+                workspacePanel
+                    .frame(minWidth: 280, idealWidth: 360, maxWidth: 520)
+            }
         }
         .background(windowBackground)
         .background(WindowTransparencyHelper(isGlass: skin.isGlass))
@@ -258,6 +267,15 @@ struct ContentView: View {
 
         let detailFields: [InspectorField]
         switch capture.normalizedPresetID {
+        case "markdown":
+            detailFields = [
+                InspectorField(label: "Page Title", value: capture.presetPayload.pageTitle),
+                InspectorField(label: "Viewport", value: capture.presetPayload.viewport),
+                InspectorField(label: "Referrer", value: capture.presetPayload.referrerURL, isLink: true),
+                InspectorField(label: "Clip Status", value: capture.presetPayload.markdownClipStatus),
+                InspectorField(label: "Markdown File", value: capture.presetPayload.markdownFilePath),
+                InspectorField(label: "Excerpt", value: capture.presetPayload.markdownClipExcerpt)
+            ]
         case "bug_report":
             detailFields = [
                 InspectorField(label: "Viewport", value: capture.presetPayload.viewport),
@@ -351,8 +369,9 @@ struct ContentView: View {
                 .buttonStyle(currentButtonStyle())
                 .help("Close Workspace Panel")
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .background(toolbarBackground)
+            .background(sidebarBackground)
 
             Rectangle()
                 .fill(skin.isModern ? skin.border : skin.separator)
@@ -724,15 +743,21 @@ struct ContentView: View {
 
     private var toolBar: some View {
         HStack(spacing: skin.isModern ? 10 : 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    isHistorySidebarVisible.toggle()
+                }
+            } label: {
+                Image(systemName: "sidebar.left")
+                    .foregroundColor(toolbarIconColor)
+                    .frame(width: skin.isModern ? 32 : 28, height: skin.isModern ? 32 : 28)
+            }
+            .buttonStyle(currentButtonStyle())
+            .help(isHistorySidebarVisible ? "Hide Sidebar" : "Show Sidebar")
+
+            presetPicker
+
             Spacer(minLength: 0)
-
-            iconButton(symbol: "folder", helpText: "Open Image") {
-                document.openImageFromDisk()
-            }
-
-            iconButton(symbol: "camera", helpText: "Capture Full Screen") {
-                document.captureMainDisplay()
-            }
 
             iconButton(symbol: "macwindow.on.rectangle", helpText: "Capture Front Window") {
                 document.presentWindowPicker()
@@ -741,12 +766,6 @@ struct ContentView: View {
             iconButton(symbol: "selection.pin.in.out", helpText: "Capture Selection") {
                 document.captureSelectionFromScreen()
             }
-
-            iconButton(symbol: "square.and.arrow.down", helpText: "Export PNG") {
-                document.saveAnnotatedImage()
-            }
-
-            themeDivider()
 
             ForEach(AnnotationTool.allCases) { tool in
                 Button {
@@ -763,8 +782,6 @@ struct ContentView: View {
             colorPickerButton
             lineWidthMenu
 
-            themeDivider()
-
             iconButton(symbol: "arrow.uturn.backward", helpText: "Undo Last Annotation") {
                 document.undoLastAnnotation()
             }
@@ -779,13 +796,26 @@ struct ContentView: View {
                 document.clearAnnotations()
             }
 
-            themeDivider()
-
             skinPicker
-
             outputMenu
 
             Spacer(minLength: 0)
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    if document.isRightPanelVisible {
+                        document.closeRightPanel()
+                    } else {
+                        document.openWorkspacePanel()
+                    }
+                }
+            } label: {
+                Image(systemName: "sidebar.right")
+                    .foregroundColor(toolbarIconColor)
+                    .frame(width: skin.isModern ? 32 : 28, height: skin.isModern ? 32 : 28)
+            }
+            .buttonStyle(currentButtonStyle())
+            .help(document.isRightPanelVisible ? "Hide Workspace Panel" : "Show Workspace Panel")
         }
         .padding(.horizontal, skin.isModern ? 16 : 10)
         .padding(.vertical, skin.isModern ? 12 : 8)
@@ -840,6 +870,7 @@ struct ContentView: View {
                 Image(systemName: "shippingbox")
                 Text(document.selectedPresetDefinition.name)
                     .font(.system(size: skin.isModern ? 11 : 10, weight: .medium))
+                    .lineLimit(1)
             }
             .frame(height: skin.isModern ? 32 : 28)
             .padding(.horizontal, 10)
@@ -847,7 +878,7 @@ struct ContentView: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .frame(height: skin.isModern ? 32 : 28)
+        .frame(width: 132, height: skin.isModern ? 32 : 28)
         .background(skinPickerBackground)
         .overlay(skinPickerOverlay)
         .help("Select Capture Preset")
@@ -927,36 +958,11 @@ struct ContentView: View {
             }
             .disabled(!document.canCopyImage)
 
-            Button("Preview Capture File Path") {
-                document.openSendPreview(.filePath)
-            }
-            .disabled(!document.canCopyCaptureOutputs)
-
-            Button("Preview Markdown Snippet") {
-                document.openSendPreview(.markdownSnippet)
-            }
-            .disabled(!document.canCopyCaptureOutputs)
-
-            Button("Preview Markdown Document") {
-                document.openSendPreview(.markdownDocument)
-            }
-            .disabled(!document.canCopyCaptureOutputs)
-
             if document.canExportIssueDraft {
-                Button("Preview Issue Draft") {
-                    document.openSendPreview(.issueDraft)
-                }
-
                 Button("Review Bug Report") {
                     document.openBugReportSubmissionSheet()
                 }
                 .keyboardShortcut("B", modifiers: [.command, .shift])
-            }
-
-            if document.canSendToGitHub {
-                Button("Preview GitHub Issue URL") {
-                    document.openSendPreview(.githubIssueURL)
-                }
             }
 
             Divider()

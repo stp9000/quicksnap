@@ -120,6 +120,7 @@ enum SelectedAnnotation: Equatable {
 final class AnnotationDocument: ObservableObject {
     private static let annotationColorDefaultsKey = "quicksnap.annotationColorHex"
     private static let captureStoragePathDefaultsKey = "quicksnap.captureStorageRootPath"
+    private static let markdownStoragePathDefaultsKey = "quicksnap.markdownStorageRootPath"
     private static let selectedPresetDefaultsKey = "quicksnap.selectedPresetID"
     private static let aiFeaturesEnabledDefaultsKey = "quicksnap.ai.enabled"
     private static let aiUsesPersonalKeyDefaultsKey = "quicksnap.ai.usesPersonalKey"
@@ -380,12 +381,24 @@ final class AnnotationDocument: ObservableObject {
         captureRepository?.rootDirectory.path ?? "Unavailable"
     }
 
+    var markdownStoragePathText: String {
+        markdownStorageDirectory.path
+    }
+
     var isUsingDefaultStorageLocation: Bool {
         UserDefaults.standard.string(forKey: Self.captureStoragePathDefaultsKey) == nil
     }
 
+    var isUsingDefaultMarkdownStorageLocation: Bool {
+        UserDefaults.standard.string(forKey: Self.markdownStoragePathDefaultsKey) == nil
+    }
+
     var storageLocationSummaryText: String {
         isUsingDefaultStorageLocation ? "Default Application Support location" : "Custom storage location"
+    }
+
+    var markdownStorageSummaryText: String {
+        isUsingDefaultMarkdownStorageLocation ? "Default folder under capture storage" : "Custom Markdown output location"
     }
 
     var currentPresetDescription: String {
@@ -871,7 +884,7 @@ final class AnnotationDocument: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         do {
-            try selectedCapture.markdownDocument.write(to: url, atomically: true, encoding: .utf8)
+            try markdownDocumentText(for: selectedCapture).write(to: url, atomically: true, encoding: .utf8)
             statusMessage = "Exported Markdown file"
         } catch {
             NSSound.beep()
@@ -1044,6 +1057,13 @@ final class AnnotationDocument: ObservableObject {
         statusMessage = "Revealed capture library"
     }
 
+    func revealMarkdownStorageInFinder() {
+        let directory = markdownStorageDirectory
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        NSWorkspace.shared.activateFileViewerSelecting([directory])
+        statusMessage = "Revealed Markdown storage"
+    }
+
     func chooseStorageLocation() {
         let panel = NSOpenPanel()
         panel.prompt = "Choose"
@@ -1063,10 +1083,32 @@ final class AnnotationDocument: ObservableObject {
         statusMessage = "Updated capture storage location"
     }
 
+    func chooseMarkdownStorageLocation() {
+        let panel = NSOpenPanel()
+        panel.prompt = "Choose"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose where QuickSnap should store generated Markdown files for the Markdown preset."
+        panel.directoryURL = markdownStorageDirectory.deletingLastPathComponent()
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        UserDefaults.standard.set(url.path, forKey: Self.markdownStoragePathDefaultsKey)
+        statusMessage = "Updated Markdown storage location"
+        refreshCaptureLibrary(preserving: selectedCaptureID)
+    }
+
     func resetStorageLocationToDefault() {
         UserDefaults.standard.removeObject(forKey: Self.captureStoragePathDefaultsKey)
         reloadCaptureRepository()
         statusMessage = "Reset capture storage to the default location"
+    }
+
+    func resetMarkdownStorageLocationToDefault() {
+        UserDefaults.standard.removeObject(forKey: Self.markdownStoragePathDefaultsKey)
+        statusMessage = "Reset Markdown storage to the default location"
+        refreshCaptureLibrary(preserving: selectedCaptureID)
     }
 
     func saveSelectedCaptureTags() {
@@ -1294,8 +1336,9 @@ final class AnnotationDocument: ObservableObject {
         let captureID = "cap_\(UUID().uuidString.lowercased())"
         let capturedURL = BrowserURLResolver.resolveURL(for: context)
         let browserMetadata = BrowserDebugMetadataResolver.resolve(for: context)
+        let pageClip = selectedPresetID == "markdown" ? BrowserPageClipper.clip(for: context) : nil
         let presetPayload = payloadAdjustedForSelectedPreset(
-            from: initialPayload(for: selectedPresetID, capturedURL: capturedURL, browserMetadata: browserMetadata)
+            from: initialPayload(for: selectedPresetID, capturedURL: capturedURL, browserMetadata: browserMetadata, pageClip: pageClip)
         )
         let draft = CaptureDraft(
             id: captureID,
@@ -1316,7 +1359,12 @@ final class AnnotationDocument: ObservableObject {
         )
 
         do {
-            let record = try captureRepository.createCapture(from: draft)
+            var record = try captureRepository.createCapture(from: draft)
+            if record.normalizedPresetID == "markdown" {
+                let enrichedMarkdownPayload = createMarkdownPayload(for: record, context: context, pageClip: pageClip)
+                try? captureRepository.updatePresetPayload(for: record.id, payload: enrichedMarkdownPayload)
+                record = record.withPresetPayload(enrichedMarkdownPayload)
+            }
             refreshCaptureLibrary(preserving: record.id)
             openCapture(record)
             statusMessage = "Saved \(record.presetDefinition.name) capture"
@@ -1339,6 +1387,13 @@ final class AnnotationDocument: ObservableObject {
             try? captureRepository.updateOCRResult(for: capture.id, ocrText: recognizedText, status: status)
             if let enrichedPayload = enrichedPayload(for: capture, recognizedText: recognizedText) {
                 try? captureRepository.updatePresetPayload(for: capture.id, payload: enrichedPayload)
+            }
+            if capture.normalizedPresetID == "markdown" {
+                let configuration = await MainActor.run { self.openAIConfiguration }
+                if let configuration,
+                   let aiPayload = try? await self.aiEnhancedMarkdownPayload(for: capture, recognizedText: recognizedText, configuration: configuration) {
+                    try? captureRepository.updatePresetPayload(for: capture.id, payload: aiPayload)
+                }
             }
             await MainActor.run {
                 self.refreshCaptureLibrary(preserving: capture.id)
@@ -1499,11 +1554,11 @@ final class AnnotationDocument: ObservableObject {
         return payload
     }
 
-    private func initialPayload(for presetID: String, capturedURL: String?, browserMetadata: BrowserDebugMetadata?) -> CapturePresetPayload {
+    private func initialPayload(for presetID: String, capturedURL: String?, browserMetadata: BrowserDebugMetadata?, pageClip: BrowserPageClipPayload?) -> CapturePresetPayload {
         var payload = CapturePresetPayload()
         if let capturedURL {
             switch presetID {
-            case "bug_report", "ui_issue":
+            case "bug_report", "ui_issue", "markdown":
                 payload.urlString = capturedURL
             default:
                 break
@@ -1531,6 +1586,167 @@ final class AnnotationDocument: ObservableObject {
             if payload.visibleErrors.isEmpty {
                 payload.visibleErrors = browserMetadata.visibleErrors
             }
+        }
+        if let pageClip {
+            if payload.pageTitle.isEmpty {
+                payload.pageTitle = pageClip.pageTitle
+            }
+            if payload.canonicalURL.isEmpty {
+                payload.canonicalURL = pageClip.canonicalURL
+            }
+            if payload.markdownClipExcerpt.isEmpty {
+                payload.markdownClipExcerpt = pageClip.excerpt
+            }
+            if payload.clippedMarkdownContent.isEmpty {
+                payload.clippedMarkdownContent = pageClip.markdown
+            }
+            if payload.markdownClipStatus.isEmpty {
+                payload.markdownClipStatus = pageClip.markdown.isEmpty ? MarkdownClipStatus.failed.rawValue : MarkdownClipStatus.dom.rawValue
+            }
+        }
+        return payload
+    }
+
+    private var markdownStorageDirectory: URL {
+        if let customPath = UserDefaults.standard.string(forKey: Self.markdownStoragePathDefaultsKey),
+           !customPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return URL(fileURLWithPath: customPath, isDirectory: true)
+        }
+
+        if let captureRepository {
+            return captureRepository.rootDirectory.appendingPathComponent("Markdown", isDirectory: true)
+        }
+
+        let defaultRoot = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("QuickSnap", isDirectory: true)
+        return defaultRoot.appendingPathComponent("Markdown", isDirectory: true)
+    }
+
+    private func markdownDocumentText(for capture: CaptureRecord) -> String {
+        if capture.normalizedPresetID != "markdown" {
+            return capture.markdownDocument
+        }
+
+        let path = capture.presetPayload.markdownFilePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !path.isEmpty,
+           FileManager.default.fileExists(atPath: path),
+           let text = try? String(contentsOfFile: path, encoding: .utf8),
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return text
+        }
+
+        return capture.markdownDocument
+    }
+
+    private func createMarkdownPayload(for capture: CaptureRecord, context: FrontmostCaptureContext, pageClip: BrowserPageClipPayload?) -> CapturePresetPayload {
+        var payload = capture.presetPayload
+        if payload.browser.isEmpty, BrowserURLResolver.isSupportedBrowserApp(capture.sourceApp) {
+            payload.browser = capture.sourceApp
+        }
+
+        let domMarkdown = pageClip?.markdown.trimmingCharacters(in: .whitespacesAndNewlines) ?? payload.clippedMarkdownContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !domMarkdown.isEmpty {
+            payload.clippedMarkdownContent = domMarkdown
+            payload.markdownClipStatus = MarkdownClipStatus.dom.rawValue
+        } else {
+            payload.clippedMarkdownContent = fallbackMarkdownBody(for: capture, pageClip: pageClip)
+            payload.markdownClipStatus = BrowserURLResolver.isSupportedBrowserApp(capture.sourceApp) ? MarkdownClipStatus.ocrFallback.rawValue : MarkdownClipStatus.unavailable.rawValue
+        }
+
+        if payload.pageTitle.isEmpty {
+            payload.pageTitle = pageClip?.pageTitle ?? capture.displayTitle
+        }
+        if payload.canonicalURL.isEmpty {
+            payload.canonicalURL = pageClip?.canonicalURL ?? payload.urlString
+        }
+        if payload.markdownClipExcerpt.isEmpty {
+            payload.markdownClipExcerpt = pageClip?.excerpt ?? firstMeaningfulExcerpt(from: payload.clippedMarkdownContent)
+        }
+
+        do {
+            let markdownURL = try ensureMarkdownFile(for: capture.withPresetPayload(payload))
+            payload.markdownFilePath = markdownURL.path
+        } catch {
+            payload.markdownFilePath = ""
+            libraryErrorMessage = "QuickSnap saved the capture, but could not write the Markdown file."
+        }
+
+        return payload
+    }
+
+    private func ensureMarkdownFile(for capture: CaptureRecord) throws -> URL {
+        let directory = markdownStorageDirectory
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileName = "\(capture.exportBaseName)-\(capture.id).md"
+        let url = directory.appendingPathComponent(fileName)
+        try capture.markdownDocument.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    private func fallbackMarkdownBody(for capture: CaptureRecord, pageClip: BrowserPageClipPayload?) -> String {
+        var lines: [String] = []
+        if let excerpt = pageClip?.excerpt, !excerpt.isEmpty {
+            lines.append(excerpt)
+        }
+        if !capture.ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if !lines.isEmpty {
+                lines.append("")
+            }
+            lines.append(capture.ocrText.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if lines.isEmpty {
+            lines.append("No structured page text was available from this capture.")
+        }
+        return lines.joined(separator: "\n\n")
+    }
+
+    private func firstMeaningfulExcerpt(from markdown: String) -> String {
+        markdown
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty && !$0.hasPrefix("#") && !$0.hasPrefix("- ") }) ?? ""
+    }
+
+    private func aiEnhancedMarkdownPayload(for capture: CaptureRecord, recognizedText: String, configuration: OpenAIAnalysisConfiguration) async throws -> CapturePresetPayload {
+        guard capture.presetPayload.markdownClipStatus != MarkdownClipStatus.dom.rawValue else {
+            return capture.presetPayload
+        }
+
+        let prompt = """
+        Convert this web capture into clean Markdown. Return only Markdown.
+
+        Source App: \(capture.sourceApp)
+        Window Title: \(capture.windowTitle)
+        URL: \(capture.primaryURL ?? "Unavailable")
+        Page Title: \(capture.presetPayload.pageTitle)
+        Existing Markdown:
+        \(capture.presetPayload.clippedMarkdownContent)
+
+        OCR Text:
+        \(recognizedText)
+        """
+
+        let markdown = try await CaptureAnalysisService.generateMarkdown(
+            prompt: prompt,
+            imageURL: capture.imageURL,
+            configuration: configuration
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !markdown.isEmpty else {
+            return capture.presetPayload
+        }
+
+        var payload = capture.presetPayload
+        payload.clippedMarkdownContent = markdown
+        payload.markdownClipStatus = MarkdownClipStatus.aiFallback.rawValue
+        if payload.markdownClipExcerpt.isEmpty {
+            payload.markdownClipExcerpt = firstMeaningfulExcerpt(from: markdown)
+        }
+        if payload.pageTitle.isEmpty {
+            payload.pageTitle = capture.displayTitle
+        }
+        if let url = try? ensureMarkdownFile(for: capture.withPresetPayload(payload)) {
+            payload.markdownFilePath = url.path
         }
         return payload
     }

@@ -157,6 +157,8 @@ struct CaptureRecord: Identifiable, Hashable {
         }
 
         switch normalizedPresetID {
+        case "markdown":
+            return markdownClipDocument
         case "bug_report":
             return issueDraftMarkdown
         default:
@@ -441,6 +443,30 @@ struct CaptureRecord: Identifiable, Hashable {
         )
     }
 
+    func withPresetPayload(_ presetPayload: CapturePresetPayload) -> CaptureRecord {
+        CaptureRecord(
+            id: id,
+            displaySequence: displaySequence,
+            imagePath: imagePath,
+            createdAt: createdAt,
+            sourceApp: sourceApp,
+            windowTitle: windowTitle,
+            urlString: urlString,
+            ocrText: ocrText,
+            tags: tags,
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight,
+            sourceKind: sourceKind,
+            showsSelectionBorder: showsSelectionBorder,
+            ocrStatus: ocrStatus,
+            presetID: presetID,
+            presetPayload: presetPayload,
+            annotations: annotations,
+            analysis: analysis,
+            chatMessages: chatMessages
+        )
+    }
+
     static let markdownTimestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -473,20 +499,52 @@ struct CaptureRecord: Identifiable, Hashable {
         return lines.joined(separator: "\n")
     }
 
-    private var documentationMarkdown: String {
-        let title = presetPayload.pageTitle.isEmpty ? displayTitle : presetPayload.pageTitle
-        let imageName = presetPayload.preferredImageName.isEmpty ? exportBaseName : presetPayload.preferredImageName
-        let body = presetPayload.generatedMarkdown.isEmpty ? "This capture is ready for documentation workflows." : presetPayload.generatedMarkdown
-        return [
-            "## \(title)",
-            "",
-            body,
-            "",
-            markdownSnippet,
-            "",
-            "- Suggested image name: `\(imageName)`",
-            primaryURL.map { "- URL: \($0)" }
-        ].compactMap { $0 }.joined(separator: "\n")
+    private var markdownClipDocument: String {
+        let title = (presetPayload.pageTitle.isEmpty ? displayTitle : presetPayload.pageTitle).trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = presetPayload.clippedMarkdownContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let clipStatus = presetPayload.markdownClipStatus.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let frontmatter: [String?] = [
+            "---",
+            "title: \"\(yamlEscaped(title.isEmpty ? displayTitle : title))\"",
+            "capture_id: \"\(id)\"",
+            "preset: \"\(presetDefinition.name)\"",
+            "captured_at: \"\(Self.markdownTimestampFormatter.string(from: createdAt))\"",
+            primaryURL.map { "source_url: \"\(yamlEscaped($0))\"" },
+            clipStatus.isEmpty ? nil : "clip_status: \"\(yamlEscaped(clipStatus))\"",
+            "screenshot_path: \"\(yamlEscaped(imagePath))\"",
+            !tags.isEmpty ? "tags: [\(tags.map { "\"\(yamlEscaped($0))\"" }.joined(separator: ", "))]" : nil,
+            "---"
+        ]
+
+        var lines = frontmatter.compactMap { $0 }
+        lines.append("")
+        lines.append("# \(title.isEmpty ? displayTitle : title)")
+        lines.append("")
+        if let primaryURL {
+            lines.append("Source: [\(primaryURL)](\(primaryURL))")
+            lines.append("")
+        }
+        if !body.isEmpty {
+            lines.append(body)
+            lines.append("")
+        } else {
+            lines.append("_QuickSnap could not clip page text for this capture. The screenshot and metadata were still saved._")
+            lines.append("")
+        }
+        lines.append("## QuickSnap Capture")
+        lines.append("")
+        lines.append(markdownSnippet)
+        lines.append("")
+        lines.append("- Capture ID: `\(sourceDisplayLabel)`")
+        lines.append("- Source: \(displaySubtitle)")
+        lines.append("- Dimensions: \(dimensionsText)")
+        lines.append("- OCR Status: \(ocrStatus.displayName)")
+        lines.append("- File: `\(imagePath)`")
+        if !presetPayload.markdownFilePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines.append("- Markdown File: `\(presetPayload.markdownFilePath)`")
+        }
+        return lines.joined(separator: "\n")
     }
 
     private var issueDraftMarkdown: String {
@@ -516,6 +574,15 @@ struct CaptureRecord: Identifiable, Hashable {
         return text
     }
 
+}
+
+struct BrowserPageClipPayload {
+    let pageTitle: String
+    let canonicalURL: String
+    let byline: String
+    let publishDate: String
+    let excerpt: String
+    let markdown: String
 }
 
 struct CaptureDraft {
@@ -551,6 +618,14 @@ struct BrowserDebugMetadata {
     let scriptSources: [String]
     let failedResources: [String]
     let visibleErrors: [String]
+}
+
+enum MarkdownClipStatus: String {
+    case dom
+    case aiFallback = "ai_fallback"
+    case ocrFallback = "ocr_fallback"
+    case failed
+    case unavailable
 }
 
 struct WindowCaptureOption: Identifiable, Hashable {
@@ -1415,6 +1490,155 @@ enum BrowserDebugMetadataResolver {
             visibleErrors: visibleErrors
         )
     }
+}
+
+enum BrowserPageClipper {
+    private static let chromiumAppNames = ["Google Chrome", "Arc", "Brave Browser", "Microsoft Edge"]
+    private static let extractionJavaScript = """
+    JSON.stringify((() => {
+        const normalize = value => (value || '').replace(/\\s+/g, ' ').trim();
+        const pickText = selectors => {
+            for (const selector of selectors) {
+                const node = document.querySelector(selector);
+                const text = normalize(node?.innerText || node?.textContent || '');
+                if (text) return text;
+            }
+            return '';
+        };
+        const pickAttr = (selector, attr) => {
+            const node = document.querySelector(selector);
+            return normalize(node?.getAttribute?.(attr) || '');
+        };
+        const articleNode = document.querySelector('article, main, [role="main"], .post-content, .entry-content, .article-content') || document.body;
+        const title = normalize(document.title);
+        const excerpt = pickAttr('meta[name="description"]', 'content') || pickAttr('meta[property="og:description"]', 'content');
+        const canonicalURL = pickAttr('link[rel="canonical"]', 'href') || location.href;
+        const byline = pickText(['meta[name="author"]', '[rel="author"]', '.byline', '.author', '[itemprop="author"]']);
+        const publishDate = pickAttr('meta[property="article:published_time"]', 'content') || pickAttr('time[datetime]', 'datetime');
+
+        const lines = [];
+        const walk = node => {
+            if (!node) return;
+            const tag = (node.tagName || '').toLowerCase();
+            if (['script', 'style', 'noscript', 'svg'].includes(tag)) return;
+            if (tag && /^h[1-6]$/.test(tag)) {
+                const level = Number(tag.slice(1));
+                const text = normalize(node.innerText);
+                if (text) lines.push(`${'#'.repeat(level)} ${text}`);
+                return;
+            }
+            if (tag === 'p') {
+                const text = normalize(node.innerText);
+                if (text) lines.push(text);
+                return;
+            }
+            if (tag === 'pre') {
+                const text = node.innerText || '';
+                if (text.trim()) lines.push("\\n```\\n" + text.trim() + "\\n```");
+                return;
+            }
+            if (tag === 'code' && node.parentElement?.tagName?.toLowerCase() !== 'pre') {
+                const text = normalize(node.innerText);
+                if (text) lines.push(`\\`${text}\\``);
+                return;
+            }
+            if (tag === 'blockquote') {
+                const text = normalize(node.innerText);
+                if (text) lines.push(text.split('\\n').map(line => `> ${line}`).join('\\n'));
+                return;
+            }
+            if (tag === 'li') {
+                const text = normalize(node.innerText);
+                if (text) lines.push(`- ${text}`);
+                return;
+            }
+            if (tag === 'a') return;
+            const children = Array.from(node.children || []);
+            if (children.length === 0) {
+                const text = normalize(node.textContent);
+                if (text && tag !== 'span') lines.push(text);
+                return;
+            }
+            children.forEach(walk);
+        };
+        walk(articleNode);
+
+        const markdown = lines.join('\\n\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
+        return { pageTitle: title, canonicalURL, byline, publishDate, excerpt, markdown };
+    })())
+    """
+
+    static func clip(for context: FrontmostCaptureContext) -> BrowserPageClipPayload? {
+        if context.bundleIdentifier == "com.apple.Safari" || context.sourceApp == "Safari" {
+            let script = """
+            tell application "Safari"
+                if (count of windows) is 0 then return ""
+                set clipJSON to do JavaScript "\(escapedForJavaScriptLiteral(extractionJavaScript))" in current tab of front window
+                return clipJSON
+            end tell
+            """
+            return run(script: script)
+        }
+
+        guard chromiumAppNames.contains(context.sourceApp) else {
+            return nil
+        }
+
+        let script = """
+        tell application "\(context.sourceApp)"
+            if (count of windows) is 0 then return ""
+            set clipJSON to execute active tab of front window javascript "\(escapedForJavaScriptLiteral(extractionJavaScript))"
+            return clipJSON
+        end tell
+        """
+        return run(script: script)
+    }
+
+    private static func run(script source: String) -> BrowserPageClipPayload? {
+        guard let script = NSAppleScript(source: source) else { return nil }
+        var error: NSDictionary?
+        let result = script.executeAndReturnError(&error)
+        if error != nil {
+            return nil
+        }
+        let value = result.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !value.isEmpty,
+              let data = value.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        let markdown = (json["markdown"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = (json["pageTitle"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let canonicalURL = (json["canonicalURL"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let byline = (json["byline"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let publishDate = (json["publishDate"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let excerpt = (json["excerpt"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if markdown.isEmpty && title.isEmpty && canonicalURL.isEmpty && excerpt.isEmpty {
+            return nil
+        }
+
+        return BrowserPageClipPayload(
+            pageTitle: title,
+            canonicalURL: canonicalURL,
+            byline: byline,
+            publishDate: publishDate,
+            excerpt: excerpt,
+            markdown: markdown
+        )
+    }
+
+    private static func escapedForJavaScriptLiteral(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: " ")
+    }
+}
+
+private func yamlEscaped(_ value: String) -> String {
+    value.replacingOccurrences(of: "\"", with: "\\\"")
 }
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)

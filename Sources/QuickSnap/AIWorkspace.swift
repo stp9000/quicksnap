@@ -187,6 +187,10 @@ enum CaptureAnalysisService {
         try await OpenAIAnalysisClient.analyze(capture: capture, configuration: configuration)
     }
 
+    static func generateMarkdown(prompt: String, imageURL: URL, configuration: OpenAIAnalysisConfiguration) async throws -> String {
+        try await OpenAIAnalysisClient.generateMarkdown(prompt: prompt, imageURL: imageURL, configuration: configuration)
+    }
+
     static func analyzeLocally(capture: CaptureRecord) -> CaptureAnalysisResult {
         heuristicAnalysis(for: capture)
     }
@@ -586,6 +590,43 @@ private enum OpenAIAnalysisClient {
 
         if let payload = try? JSONDecoder().decode(ChatPayload.self, from: Data(outputText.utf8)) {
             return payload.answer
+        }
+        return outputText
+    }
+
+    static func generateMarkdown(prompt: String, imageURL: URL, configuration: OpenAIAnalysisConfiguration) async throws -> String {
+        let imageDataURL = try imageDataURL(for: imageURL)
+        let body = RequestBody(
+            model: configuration.model,
+            input: [
+                RequestMessage(
+                    role: "user",
+                    content: [
+                        RequestContent(type: "input_text", text: prompt),
+                        RequestContent(type: "input_image", imageURL: imageDataURL)
+                    ]
+                )
+            ],
+            text: .init(format: .init(type: "text"))
+        )
+
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw CaptureAnalysisError.badResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw apiError(from: data) ?? CaptureAnalysisError.badResponse
+        }
+
+        let envelope = try JSONDecoder().decode(ResponseEnvelope.self, from: data)
+        guard let outputText = extractedOutputText(from: envelope), !outputText.isEmpty else {
+            throw CaptureAnalysisError.emptyResponse
         }
         return outputText
     }

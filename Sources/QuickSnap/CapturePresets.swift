@@ -2,6 +2,7 @@ import Foundation
 
 struct CapturePresetPayload: Codable, Hashable {
     var urlString: String = ""
+    var canonicalURL: String = ""
     var browser: String = ""
     var viewport: String = ""
     var userAgent: String = ""
@@ -14,6 +15,10 @@ struct CapturePresetPayload: Codable, Hashable {
     var stackTrace: String = ""
     var pageTitle: String = ""
     var generatedMarkdown: String = ""
+    var clippedMarkdownContent: String = ""
+    var markdownClipStatus: String = ""
+    var markdownClipExcerpt: String = ""
+    var markdownFilePath: String = ""
     var preferredImageName: String = ""
     var researchSummary: String = ""
     var sourceURL: String = ""
@@ -22,7 +27,7 @@ struct CapturePresetPayload: Codable, Hashable {
     var customFields: [String: String] = [:]
 
     var primaryURL: String? {
-        let candidates = [urlString, sourceURL]
+        let candidates = [canonicalURL, urlString, sourceURL]
         return candidates.first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
     }
 }
@@ -72,8 +77,20 @@ struct CapturePresetDefinition: Identifiable, Hashable {
         customDefinition: nil
     )
 
+    static let markdown = CapturePresetDefinition(
+        id: "markdown",
+        name: "Markdown",
+        description: "Capture a web page into a reusable Markdown document.",
+        expectedFields: ["URL", "Page Title", "Clip Status"],
+        exportModes: [.markdown],
+        supportsAIEnrichment: true,
+        isCustom: false,
+        customDefinition: nil
+    )
+
     static let builtin: [CapturePresetDefinition] = [
         .general,
+        .markdown,
         .uiIssue
     ]
 
