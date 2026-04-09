@@ -8,3 +8,8 @@ Resources/AppIcon.iconset/
 .home/
 .tmp/
 dist/
+Vendor/ObsidianClipperHelper/node_modules/
+Markdown/
+wiki/
+Captures/
+captures.sqlite3
