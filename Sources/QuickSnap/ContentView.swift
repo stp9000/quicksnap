@@ -190,6 +190,12 @@ struct ContentView: View {
                     .foregroundColor(skin.accent)
                 }
 
+                Button(capture.presetPayload.wikiIngestStatus == "complete" ? "Re-ingest to Wiki" : "Ingest to Wiki") {
+                    document.ingestSelectedCaptureToWiki()
+                }
+                .buttonStyle(.borderless)
+                .foregroundColor(skin.accent)
+
                 Button("Reveal Library in Finder") {
                     document.revealCaptureLibraryInFinder()
                 }
@@ -266,6 +272,14 @@ struct ContentView: View {
         ]
 
         let detailFields: [InspectorField]
+        let wikiFields = [
+            InspectorField(label: "Wiki Ingest", value: capture.presetPayload.wikiIngestStatus),
+            InspectorField(label: "Wiki Entities", value: capture.presetPayload.wikiEntities.joined(separator: "\n")),
+            InspectorField(label: "Wiki Concepts", value: capture.presetPayload.wikiConcepts.joined(separator: "\n")),
+            InspectorField(label: "Wiki Pages", value: capture.presetPayload.wikiPagesAffected.joined(separator: "\n")),
+            InspectorField(label: "Wiki Capture Page", value: capture.presetPayload.wikiCapturePagePath),
+            InspectorField(label: "Wiki Error", value: capture.presetPayload.wikiIngestError)
+        ]
         switch capture.normalizedPresetID {
         case "markdown":
             detailFields = [
@@ -273,9 +287,13 @@ struct ContentView: View {
                 InspectorField(label: "Viewport", value: capture.presetPayload.viewport),
                 InspectorField(label: "Referrer", value: capture.presetPayload.referrerURL, isLink: true),
                 InspectorField(label: "Clip Status", value: capture.presetPayload.markdownClipStatus),
+                InspectorField(label: "Extraction Engine", value: capture.presetPayload.markdownExtractionEngine),
+                InspectorField(label: "Author", value: capture.presetPayload.markdownAuthor),
+                InspectorField(label: "Published", value: capture.presetPayload.markdownPublishedDate),
+                InspectorField(label: "Extraction Error", value: capture.presetPayload.markdownExtractionError),
                 InspectorField(label: "Markdown File", value: capture.presetPayload.markdownFilePath),
                 InspectorField(label: "Excerpt", value: capture.presetPayload.markdownClipExcerpt)
-            ]
+            ] + wikiFields
         case "bug_report":
             detailFields = [
                 InspectorField(label: "Viewport", value: capture.presetPayload.viewport),
@@ -287,14 +305,14 @@ struct ContentView: View {
                 InspectorField(label: "Visible Errors", value: capture.presetPayload.visibleErrors.joined(separator: "\n")),
                 InspectorField(label: "Failed Resources", value: capture.presetPayload.failedResources.joined(separator: "\n")),
                 InspectorField(label: "Script Sources", value: capture.presetPayload.scriptSources.joined(separator: "\n"))
-            ]
+            ] + wikiFields
         default:
             if let custom = capture.presetDefinition.customDefinition {
                 detailFields = custom.fieldNames.map { field in
                     InspectorField(label: field, value: capture.presetPayload.customFields[field, default: ""])
-                }
+                } + wikiFields
             } else {
-                detailFields = []
+                detailFields = wikiFields
             }
         }
 

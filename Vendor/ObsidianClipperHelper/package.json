@@ -1,0 +1,12 @@
+{
+  "name": "quicksnap-obsidian-clipper-helper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal helper that uses the Obsidian Clipper extraction stack for QuickSnap.",
+  "dependencies": {
+    "defuddle": "^0.15.0",
+    "linkedom": "^0.18.0",
+    "turndown": "^7.2.0"
+  }
+}

@@ -348,6 +348,7 @@ final class AnnotationDocument: ObservableObject {
     var canCopyImage: Bool { backgroundImage != nil }
     var canAnalyzeSelectedCapture: Bool { selectedCapture != nil }
     var canRunAIAnalysis: Bool { aiFeaturesEnabled && selectedCapture != nil }
+    var canIngestSelectedCaptureToWiki: Bool { selectedCapture != nil }
     var canExportIssueDraft: Bool {
         guard let selectedCapture else { return false }
         return selectedCapture.presetDefinition.exportModes.contains(.issueDraft)
@@ -383,6 +384,10 @@ final class AnnotationDocument: ObservableObject {
 
     var markdownStoragePathText: String {
         markdownStorageDirectory.path
+    }
+
+    var wikiStoragePathText: String {
+        wikiRepository.rootDirectory.path
     }
 
     var isUsingDefaultStorageLocation: Bool {
@@ -1064,6 +1069,11 @@ final class AnnotationDocument: ObservableObject {
         statusMessage = "Revealed Markdown storage"
     }
 
+    func ingestSelectedCaptureToWiki() {
+        guard let selectedCapture else { return }
+        startWikiIngest(for: selectedCapture, trigger: .manual)
+    }
+
     func chooseStorageLocation() {
         let panel = NSOpenPanel()
         panel.prompt = "Choose"
@@ -1385,17 +1395,40 @@ final class AnnotationDocument: ObservableObject {
             let recognizedText = OCRTextRecognizer.recognizeText(at: capture.imageURL)
             let status: CaptureOCRStatus = recognizedText.isEmpty ? .unavailable : .complete
             try? captureRepository.updateOCRResult(for: capture.id, ocrText: recognizedText, status: status)
+            var finalPayload = capture.presetPayload
             if let enrichedPayload = enrichedPayload(for: capture, recognizedText: recognizedText) {
-                try? captureRepository.updatePresetPayload(for: capture.id, payload: enrichedPayload)
+                var payloadToPersist = enrichedPayload
+                if capture.normalizedPresetID == "markdown" {
+                    payloadToPersist = await MainActor.run {
+                        var updated = enrichedPayload
+                        if let url = try? self.ensureMarkdownFile(for: capture.withPresetPayload(updated)) {
+                            updated.markdownFilePath = url.path
+                        }
+                        return updated
+                    }
+                }
+                try? captureRepository.updatePresetPayload(for: capture.id, payload: payloadToPersist)
+                finalPayload = payloadToPersist
             }
             if capture.normalizedPresetID == "markdown" {
                 let configuration = await MainActor.run { self.openAIConfiguration }
                 if let configuration,
                    let aiPayload = try? await self.aiEnhancedMarkdownPayload(for: capture, recognizedText: recognizedText, configuration: configuration) {
                     try? captureRepository.updatePresetPayload(for: capture.id, payload: aiPayload)
+                    finalPayload = aiPayload
                 }
             }
+            let finalPayloadForIngest = finalPayload
             await MainActor.run {
+                if capture.normalizedPresetID == "markdown" {
+                    let currentCapture = self.captureWithUpdatedState(
+                        from: capture,
+                        payload: finalPayloadForIngest,
+                        ocrText: recognizedText,
+                        ocrStatus: status
+                    )
+                    self.startWikiIngest(for: currentCapture, trigger: .automatic)
+                }
                 self.refreshCaptureLibrary(preserving: capture.id)
             }
         }
@@ -1597,11 +1630,13 @@ final class AnnotationDocument: ObservableObject {
             if payload.markdownClipExcerpt.isEmpty {
                 payload.markdownClipExcerpt = pageClip.excerpt
             }
-            if payload.clippedMarkdownContent.isEmpty {
-                payload.clippedMarkdownContent = pageClip.markdown
-            }
+        }
+        if presetID == "markdown" {
             if payload.markdownClipStatus.isEmpty {
-                payload.markdownClipStatus = pageClip.markdown.isEmpty ? MarkdownClipStatus.failed.rawValue : MarkdownClipStatus.dom.rawValue
+                payload.markdownClipStatus = MarkdownClipStatus.extracting.rawValue
+            }
+            if payload.markdownExtractionEngine.isEmpty {
+                payload.markdownExtractionEngine = "pending"
             }
         }
         return payload
@@ -1622,19 +1657,14 @@ final class AnnotationDocument: ObservableObject {
         return defaultRoot.appendingPathComponent("Markdown", isDirectory: true)
     }
 
+    private var wikiRepository: WikiRepository {
+        WikiRepository(markdownRootDirectory: markdownStorageDirectory)
+    }
+
     private func markdownDocumentText(for capture: CaptureRecord) -> String {
         if capture.normalizedPresetID != "markdown" {
             return capture.markdownDocument
         }
-
-        let path = capture.presetPayload.markdownFilePath.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !path.isEmpty,
-           FileManager.default.fileExists(atPath: path),
-           let text = try? String(contentsOfFile: path, encoding: .utf8),
-           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return text
-        }
-
         return capture.markdownDocument
     }
 
@@ -1644,13 +1674,71 @@ final class AnnotationDocument: ObservableObject {
             payload.browser = capture.sourceApp
         }
 
-        let domMarkdown = pageClip?.markdown.trimmingCharacters(in: .whitespacesAndNewlines) ?? payload.clippedMarkdownContent.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !domMarkdown.isEmpty {
-            payload.clippedMarkdownContent = domMarkdown
-            payload.markdownClipStatus = MarkdownClipStatus.dom.rawValue
+        let pageSource = BrowserPageSourceResolver.resolve(for: context)
+        let helperResult: MarkdownHelperExtractionResult?
+        let helperURL = pageSource?.urlString.isEmpty == false ? pageSource?.urlString ?? "" : (capture.primaryURL ?? "")
+        if !helperURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            do {
+                helperResult = try ObsidianClipperHelper.extract(
+                    urlString: helperURL,
+                    pageTitle: (pageSource?.pageTitle.isEmpty == false ? pageSource?.pageTitle : payload.pageTitle) ?? payload.pageTitle,
+                    html: pageSource?.html
+                )
+            } catch {
+                helperResult = MarkdownHelperExtractionResult(
+                    engine: "obsidian_clipper_helper",
+                    title: "",
+                    author: "",
+                    published: "",
+                    excerpt: "",
+                    canonicalURL: "",
+                    site: "",
+                    wordCount: 0,
+                    markdown: "",
+                    error: error.localizedDescription
+                )
+            }
         } else {
-            payload.clippedMarkdownContent = fallbackMarkdownBody(for: capture, pageClip: pageClip)
-            payload.markdownClipStatus = BrowserURLResolver.isSupportedBrowserApp(capture.sourceApp) ? MarkdownClipStatus.ocrFallback.rawValue : MarkdownClipStatus.unavailable.rawValue
+            helperResult = nil
+        }
+
+        if let helperResult, helperResult.succeeded {
+            payload.clippedMarkdownContent = helperResult.markdown
+            payload.markdownClipStatus = MarkdownClipStatus.complete.rawValue
+            payload.markdownExtractionEngine = helperResult.engine
+            payload.markdownExtractionError = ""
+            if payload.pageTitle.isEmpty {
+                payload.pageTitle = helperResult.title.isEmpty ? capture.displayTitle : helperResult.title
+            }
+            if payload.canonicalURL.isEmpty {
+                payload.canonicalURL = helperResult.canonicalURL.isEmpty ? (pageSource?.urlString.isEmpty == false ? pageSource?.urlString ?? payload.urlString : payload.urlString) : helperResult.canonicalURL
+            }
+            if payload.markdownClipExcerpt.isEmpty {
+                payload.markdownClipExcerpt = helperResult.excerpt.isEmpty ? firstMeaningfulExcerpt(from: helperResult.markdown) : helperResult.excerpt
+            }
+            if payload.markdownAuthor.isEmpty {
+                payload.markdownAuthor = helperResult.author
+            }
+            if payload.markdownPublishedDate.isEmpty {
+                payload.markdownPublishedDate = helperResult.published
+            }
+        } else {
+            let domMarkdown = pageClip?.markdown.trimmingCharacters(in: .whitespacesAndNewlines) ?? payload.clippedMarkdownContent.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let helperResult, !helperResult.error.isEmpty {
+                payload.markdownExtractionError = helperResult.error
+            } else if BrowserURLResolver.isSupportedBrowserApp(capture.sourceApp) {
+                payload.markdownExtractionError = "QuickSnap fell back because the Obsidian Clipper helper could not extract this page."
+            }
+
+            if !domMarkdown.isEmpty {
+                payload.clippedMarkdownContent = domMarkdown
+                payload.markdownClipStatus = MarkdownClipStatus.fallback.rawValue
+                payload.markdownExtractionEngine = "quicksnap_dom_fallback"
+            } else {
+                payload.clippedMarkdownContent = fallbackMarkdownBody(for: capture, pageClip: pageClip)
+                payload.markdownClipStatus = MarkdownClipStatus.fallback.rawValue
+                payload.markdownExtractionEngine = BrowserURLResolver.isSupportedBrowserApp(capture.sourceApp) ? "ocr_fallback" : "unavailable"
+            }
         }
 
         if payload.pageTitle.isEmpty {
@@ -1708,7 +1796,7 @@ final class AnnotationDocument: ObservableObject {
     }
 
     private func aiEnhancedMarkdownPayload(for capture: CaptureRecord, recognizedText: String, configuration: OpenAIAnalysisConfiguration) async throws -> CapturePresetPayload {
-        guard capture.presetPayload.markdownClipStatus != MarkdownClipStatus.dom.rawValue else {
+        guard capture.presetPayload.markdownExtractionEngine != "obsidian_clipper_helper" else {
             return capture.presetPayload
         }
 
@@ -1738,7 +1826,8 @@ final class AnnotationDocument: ObservableObject {
 
         var payload = capture.presetPayload
         payload.clippedMarkdownContent = markdown
-        payload.markdownClipStatus = MarkdownClipStatus.aiFallback.rawValue
+        payload.markdownClipStatus = MarkdownClipStatus.fallback.rawValue
+        payload.markdownExtractionEngine = "ai_fallback"
         if payload.markdownClipExcerpt.isEmpty {
             payload.markdownClipExcerpt = firstMeaningfulExcerpt(from: markdown)
         }
@@ -1749,6 +1838,123 @@ final class AnnotationDocument: ObservableObject {
             payload.markdownFilePath = url.path
         }
         return payload
+    }
+
+    private enum WikiIngestTrigger {
+        case automatic
+        case manual
+    }
+
+    private func startWikiIngest(for capture: CaptureRecord, trigger: WikiIngestTrigger) {
+        guard let captureRepository else { return }
+
+        var pendingPayload = capture.presetPayload
+        pendingPayload.wikiIngestStatus = "pending"
+        pendingPayload.wikiIngestError = ""
+        do {
+            try captureRepository.updatePresetPayload(for: capture.id, payload: pendingPayload)
+        } catch {
+            libraryErrorMessage = "QuickSnap could not queue wiki ingest."
+            return
+        }
+
+        refreshCaptureLibrary(preserving: capture.id)
+        if trigger == .manual {
+            statusMessage = pendingPayload.wikiPagesAffected.isEmpty ? "Ingesting capture into wiki..." : "Re-ingesting capture into wiki..."
+        }
+
+        let workingCapture = captureWithUpdatedState(
+            from: capture,
+            payload: pendingPayload,
+            ocrText: capture.ocrText,
+            ocrStatus: capture.ocrStatus
+        )
+
+        Task.detached(priority: .utility) { [captureRepository] in
+            let configuration = await MainActor.run { self.openAIConfiguration }
+            guard let configuration else {
+                await MainActor.run {
+                    self.finishWikiIngestFailure(
+                        for: workingCapture,
+                        errorMessage: "Save an OpenAI API key and enable personal-key AI features to ingest captures into the wiki."
+                    )
+                }
+                return
+            }
+
+            do {
+                let annotationSummary = WikiOperationService.annotationSummary(from: workingCapture.annotations)
+                let repository = await MainActor.run { self.wikiRepository }
+                let result = try await WikiOperationService.ingest(
+                    capture: workingCapture,
+                    annotationSummary: annotationSummary,
+                    repository: repository,
+                    configuration: configuration
+                )
+
+                var updatedPayload = workingCapture.presetPayload
+                updatedPayload.wikiEntities = result.entities
+                updatedPayload.wikiConcepts = result.concepts
+                updatedPayload.wikiIngestStatus = "complete"
+                updatedPayload.wikiPagesAffected = result.affectedPaths
+                updatedPayload.wikiIngestError = ""
+                updatedPayload.wikiCapturePagePath = result.capturePagePath
+
+                try captureRepository.updatePresetPayload(for: workingCapture.id, payload: updatedPayload)
+
+                await MainActor.run {
+                    self.refreshCaptureLibrary(preserving: workingCapture.id)
+                    self.statusMessage = trigger == .automatic ? "Wiki ingest completed" : "Saved wiki pages for the selected capture"
+                }
+            } catch {
+                await MainActor.run {
+                    self.finishWikiIngestFailure(for: workingCapture, errorMessage: self.readableAnalysisError(error))
+                }
+            }
+        }
+    }
+
+    private func finishWikiIngestFailure(for capture: CaptureRecord, errorMessage: String) {
+        guard let captureRepository else { return }
+        var failedPayload = capture.presetPayload
+        failedPayload.wikiIngestStatus = "failed"
+        failedPayload.wikiIngestError = errorMessage
+        do {
+            try captureRepository.updatePresetPayload(for: capture.id, payload: failedPayload)
+        } catch {
+            libraryErrorMessage = "QuickSnap could not update wiki ingest status."
+        }
+        refreshCaptureLibrary(preserving: capture.id)
+        statusMessage = "Wiki ingest failed"
+    }
+
+    private func captureWithUpdatedState(
+        from capture: CaptureRecord,
+        payload: CapturePresetPayload,
+        ocrText: String,
+        ocrStatus: CaptureOCRStatus
+    ) -> CaptureRecord {
+        CaptureRecord(
+            id: capture.id,
+            displaySequence: capture.displaySequence,
+            imagePath: capture.imagePath,
+            createdAt: capture.createdAt,
+            sourceApp: capture.sourceApp,
+            windowTitle: capture.windowTitle,
+            urlString: capture.urlString,
+            ocrText: ocrText,
+            tags: capture.tags,
+            pixelWidth: capture.pixelWidth,
+            pixelHeight: capture.pixelHeight,
+            sourceKind: capture.sourceKind,
+            showsSelectionBorder: capture.showsSelectionBorder,
+            ocrStatus: ocrStatus,
+            presetID: capture.presetID,
+            presetPayload: payload,
+            annotations: capture.annotations,
+            analysis: capture.analysis,
+            chatMessages: capture.chatMessages
+        )
     }
 
     private func generatedCustomTemplate(baseTemplate: String, fieldNames: [String]) -> String {
@@ -2175,6 +2381,22 @@ private func enrichedPayload(for capture: CaptureRecord, recognizedText: String)
         let visibleErrors = VisibleErrorExtractor.extract(from: recognizedText)
         if !visibleErrors.isEmpty {
             payload.visibleErrors = visibleErrors
+            didChange = true
+        }
+    }
+
+    if capture.normalizedPresetID == "markdown",
+       payload.markdownExtractionEngine != "obsidian_clipper_helper" {
+        let existing = payload.clippedMarkdownContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let recognized = recognizedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !recognized.isEmpty && (existing.isEmpty || existing == "No structured page text was available from this capture.") {
+            payload.clippedMarkdownContent = recognized
+            payload.markdownClipExcerpt = recognized
+                .split(separator: "\n")
+                .map(String.init)
+                .first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) ?? payload.markdownClipExcerpt
+            payload.markdownClipStatus = MarkdownClipStatus.fallback.rawValue
+            payload.markdownExtractionEngine = "ocr_fallback"
             didChange = true
         }
     }

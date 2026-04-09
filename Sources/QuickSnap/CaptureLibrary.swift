@@ -503,6 +503,8 @@ struct CaptureRecord: Identifiable, Hashable {
         let title = (presetPayload.pageTitle.isEmpty ? displayTitle : presetPayload.pageTitle).trimmingCharacters(in: .whitespacesAndNewlines)
         let body = presetPayload.clippedMarkdownContent.trimmingCharacters(in: .whitespacesAndNewlines)
         let clipStatus = presetPayload.markdownClipStatus.trimmingCharacters(in: .whitespacesAndNewlines)
+        let extractionEngine = presetPayload.markdownExtractionEngine.trimmingCharacters(in: .whitespacesAndNewlines)
+        let extractionError = presetPayload.markdownExtractionError.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let frontmatter: [String?] = [
             "---",
@@ -512,6 +514,9 @@ struct CaptureRecord: Identifiable, Hashable {
             "captured_at: \"\(Self.markdownTimestampFormatter.string(from: createdAt))\"",
             primaryURL.map { "source_url: \"\(yamlEscaped($0))\"" },
             clipStatus.isEmpty ? nil : "clip_status: \"\(yamlEscaped(clipStatus))\"",
+            extractionEngine.isEmpty ? nil : "extraction_engine: \"\(yamlEscaped(extractionEngine))\"",
+            presetPayload.markdownAuthor.isEmpty ? nil : "author: \"\(yamlEscaped(presetPayload.markdownAuthor))\"",
+            presetPayload.markdownPublishedDate.isEmpty ? nil : "published: \"\(yamlEscaped(presetPayload.markdownPublishedDate))\"",
             "screenshot_path: \"\(yamlEscaped(imagePath))\"",
             !tags.isEmpty ? "tags: [\(tags.map { "\"\(yamlEscaped($0))\"" }.joined(separator: ", "))]" : nil,
             "---"
@@ -532,6 +537,10 @@ struct CaptureRecord: Identifiable, Hashable {
             lines.append("_QuickSnap could not clip page text for this capture. The screenshot and metadata were still saved._")
             lines.append("")
         }
+        if !extractionError.isEmpty {
+            lines.append("> Extraction note: \(extractionError)")
+            lines.append("")
+        }
         lines.append("## QuickSnap Capture")
         lines.append("")
         lines.append(markdownSnippet)
@@ -540,6 +549,9 @@ struct CaptureRecord: Identifiable, Hashable {
         lines.append("- Source: \(displaySubtitle)")
         lines.append("- Dimensions: \(dimensionsText)")
         lines.append("- OCR Status: \(ocrStatus.displayName)")
+        if !extractionEngine.isEmpty {
+            lines.append("- Extraction Engine: \(extractionEngine)")
+        }
         lines.append("- File: `\(imagePath)`")
         if !presetPayload.markdownFilePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             lines.append("- Markdown File: `\(presetPayload.markdownFilePath)`")
@@ -621,6 +633,9 @@ struct BrowserDebugMetadata {
 }
 
 enum MarkdownClipStatus: String {
+    case extracting
+    case complete
+    case fallback
     case dom
     case aiFallback = "ai_fallback"
     case ocrFallback = "ocr_fallback"
