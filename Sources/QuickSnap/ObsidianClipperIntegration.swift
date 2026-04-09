@@ -34,10 +34,14 @@ enum BrowserPageSourceResolver {
     private static let chromiumAppNames = ["Google Chrome", "Arc", "Brave Browser", "Microsoft Edge"]
     private static let extractionJavaScript = """
     JSON.stringify((() => {
+        const root = document.documentElement ? document.documentElement.cloneNode(true) : null;
+        if (root) {
+            root.querySelectorAll('script, style, noscript').forEach(node => node.remove());
+        }
         return {
             url: location.href || "",
             title: document.title || "",
-            html: document.documentElement ? document.documentElement.outerHTML : ""
+            html: root ? root.outerHTML : ""
         };
     })())
     """
@@ -100,12 +104,16 @@ enum BrowserPageSourceResolver {
 
 enum ObsidianClipperHelper {
     private static let helperDirectoryName = "ObsidianClipperHelper"
+    private static let helperRuntimeDirectoryName = "HelperRuntime"
     private static let repoRootURL: URL = {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
     }()
+    private static var isPackagedApp: Bool {
+        Bundle.main.bundleURL.pathExtension == "app"
+    }
 
     static func extract(urlString: String, pageTitle: String, html: String?) throws -> MarkdownHelperExtractionResult {
         let helperDirectory = try helperDirectoryURL()
@@ -189,6 +197,12 @@ enum ObsidianClipperHelper {
             return resourceURL
         }
 
+        if isPackagedApp {
+            throw NSError(domain: "QuickSnap.ObsidianClipperHelper", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "The bundled Obsidian Clipper helper could not be found."
+            ])
+        }
+
         let repoURL = repoRootURL.appendingPathComponent("Vendor").appendingPathComponent(helperDirectoryName, isDirectory: true)
         if FileManager.default.fileExists(atPath: repoURL.path) {
             return repoURL
@@ -200,6 +214,17 @@ enum ObsidianClipperHelper {
     }
 
     private static func nodeBinaryURL() throws -> URL {
+        if let bundledNode = bundledNodeURL(),
+           FileManager.default.isExecutableFile(atPath: bundledNode.path) {
+            return bundledNode
+        }
+
+        if isPackagedApp {
+            throw NSError(domain: "QuickSnap.ObsidianClipperHelper", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: "The bundled Node.js runtime could not be found."
+            ])
+        }
+
         var candidates: [URL] = []
         let environment = ProcessInfo.processInfo.environment
         if let path = environment["PATH"] {
@@ -222,13 +247,6 @@ enum ObsidianClipperHelper {
             .filter { FileManager.default.isExecutableFile(atPath: $0) }
             .map { URL(fileURLWithPath: $0) })
 
-        if let bundledNode = Bundle.main.resourceURL?
-            .appendingPathComponent("HelperRuntime", isDirectory: true)
-            .appendingPathComponent("node"),
-           FileManager.default.isExecutableFile(atPath: bundledNode.path) {
-            candidates.append(bundledNode)
-        }
-
         for candidate in uniqueURLs(candidates) {
             if nodeIsRunnable(at: candidate) {
                 return candidate
@@ -238,6 +256,12 @@ enum ObsidianClipperHelper {
         throw NSError(domain: "QuickSnap.ObsidianClipperHelper", code: 3, userInfo: [
             NSLocalizedDescriptionKey: "Node.js is unavailable, so QuickSnap could not run the Obsidian Clipper helper."
         ])
+    }
+
+    private static func bundledNodeURL() -> URL? {
+        Bundle.main.resourceURL?
+            .appendingPathComponent(helperRuntimeDirectoryName, isDirectory: true)
+            .appendingPathComponent("node")
     }
 
     private static func nodeIsRunnable(at url: URL) -> Bool {

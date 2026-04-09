@@ -14,9 +14,12 @@ cd "$ROOT_DIR"
 swift scripts/generate_icon.swift
 iconutil -c icns Resources/AppIcon.iconset -o Resources/AppIcon.icns
 
-if [ -d "$HELPER_DIR" ]; then
-  npm ci --omit=dev --prefix "$HELPER_DIR"
+if [ ! -d "$HELPER_DIR" ]; then
+  echo "Error: missing vendored helper directory at $HELPER_DIR" >&2
+  exit 1
 fi
+
+npm ci --omit=dev --prefix "$HELPER_DIR"
 
 swift build -c release
 
@@ -32,14 +35,30 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$HELPER_RUNTIME_DIR"
 cp "$ROOT_DIR/.build/release/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 cp "$ROOT_DIR/Resources/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 
-if [ -d "$HELPER_DIR" ]; then
-  rsync -a --delete "$HELPER_DIR/" "$RESOURCES_DIR/ObsidianClipperHelper/"
+if [ ! -f "$HELPER_DIR/clipper-helper.mjs" ]; then
+  echo "Error: missing vendored helper script at $HELPER_DIR/clipper-helper.mjs" >&2
+  exit 1
 fi
 
-if command -v node >/dev/null 2>&1; then
-  cp "$(command -v node)" "$HELPER_RUNTIME_DIR/node"
-  chmod +x "$HELPER_RUNTIME_DIR/node"
+rsync -a --delete "$HELPER_DIR/" "$RESOURCES_DIR/ObsidianClipperHelper/"
+
+NODE_BINARY="${NODE_BINARY:-}"
+if [ -n "$NODE_BINARY" ]; then
+  if [ ! -x "$NODE_BINARY" ]; then
+    echo "Error: NODE_BINARY is set but not executable: $NODE_BINARY" >&2
+    exit 1
+  fi
+else
+  NODE_BINARY="$(command -v node || true)"
 fi
+
+if [ -z "$NODE_BINARY" ] || [ ! -x "$NODE_BINARY" ]; then
+  echo "Error: Node.js is required to package QuickSnap. Install Node.js or set NODE_BINARY to an executable runtime." >&2
+  exit 1
+fi
+
+cp "$NODE_BINARY" "$HELPER_RUNTIME_DIR/node"
+chmod +x "$HELPER_RUNTIME_DIR/node"
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

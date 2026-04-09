@@ -1675,14 +1675,17 @@ final class AnnotationDocument: ObservableObject {
         }
 
         let pageSource = BrowserPageSourceResolver.resolve(for: context)
+        let liveHTML = pageSource?.html.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let clippedMarkdown = pageClip?.markdown.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let helperResult: MarkdownHelperExtractionResult?
         let helperURL = pageSource?.urlString.isEmpty == false ? pageSource?.urlString ?? "" : (capture.primaryURL ?? "")
-        if !helperURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let shouldAttemptHelper = !helperURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (!liveHTML.isEmpty || clippedMarkdown.isEmpty)
+        if shouldAttemptHelper {
             do {
                 helperResult = try ObsidianClipperHelper.extract(
                     urlString: helperURL,
                     pageTitle: (pageSource?.pageTitle.isEmpty == false ? pageSource?.pageTitle : payload.pageTitle) ?? payload.pageTitle,
-                    html: pageSource?.html
+                    html: liveHTML.isEmpty ? nil : liveHTML
                 )
             } catch {
                 helperResult = MarkdownHelperExtractionResult(
@@ -1723,7 +1726,7 @@ final class AnnotationDocument: ObservableObject {
                 payload.markdownPublishedDate = helperResult.published
             }
         } else {
-            let domMarkdown = pageClip?.markdown.trimmingCharacters(in: .whitespacesAndNewlines) ?? payload.clippedMarkdownContent.trimmingCharacters(in: .whitespacesAndNewlines)
+            let domMarkdown = clippedMarkdown.isEmpty ? payload.clippedMarkdownContent.trimmingCharacters(in: .whitespacesAndNewlines) : clippedMarkdown
             if let helperResult, !helperResult.error.isEmpty {
                 payload.markdownExtractionError = helperResult.error
             } else if BrowserURLResolver.isSupportedBrowserApp(capture.sourceApp) {
