@@ -11,6 +11,9 @@ APP_PATH="$ROOT_DIR/build/${APP_NAME}.app"
 DIST_DIR="$ROOT_DIR/dist"
 ARCHIVE_NAME="${APP_NAME}-v${APP_VERSION}-macOS-unsigned.zip"
 
+# This archive is intended for maintainer/dev packaging workflows.
+# Public GitHub releases should publish the notarized archive instead.
+
 cd "$ROOT_DIR"
 
 APP_VERSION="$APP_VERSION" BUILD_NUMBER="$BUILD_NUMBER" ./scripts/build_app.sh

@@ -1,40 +1,49 @@
 # Privacy and Permissions
 
-QuickSnap is a local-first macOS screenshot and annotation app. It stores captures on-device for history and search, and it does not include analytics, crash reporting, cloud sync, advertising SDKs, or other network-backed telemetry.
+QuickSnap is a local-first macOS app. It stores captures, OCR text, metadata, Markdown files, and wiki files on your Mac. It does not include analytics, ad SDKs, crash reporting, or cloud sync.
 
 ## What QuickSnap accesses
 
-- Screen Recording permission is required when you capture the main display or an on-screen selection.
-- Screen Recording permission is also used when you capture the frontmost window.
-- Apple Events automation permission may be requested for supported browsers so QuickSnap can store the active page URL in capture metadata.
-- File open access is used only when you choose an image from disk.
-- File save access is used only when you export an annotated PNG.
-- Network access is used only when you choose to run AI analysis with a personal API key.
+- `Screen Recording` to capture the display, a window, or a selected region.
+- `Automation` for supported browsers when QuickSnap reads browser metadata or page content for `Markdown` captures.
+- file open access when you import an image.
+- file save access when you export a Markdown document or image.
+- network access only for optional integrations you configure, such as OpenAI-powered wiki/Markdown refinement.
 
-## What QuickSnap stores
+## What QuickSnap stores locally
 
-- Screen captures are stored in QuickSnap's local capture library. By default this lives under macOS Application Support, and the user can choose a different folder in Settings.
-- Capture metadata such as timestamp, capture type, source app, window title, and dimensions is stored locally in QuickSnap's SQLite library.
-- Preset-specific structured fields such as URLs, browser names, stack traces, documentation notes, research summaries, table data, and custom preset field values are stored locally when you add them.
-- AI analysis results such as summaries, recommended actions, issue-draft suggestions, and analysis metadata are stored locally in QuickSnap's SQLite library when analysis is run.
-- OCR text extracted from captures is stored locally so captures can be searched.
-- User-edited tags for captures are stored locally in the same SQLite library.
-- A personal OpenAI API key, if you save one, is stored securely in your macOS Keychain rather than in QuickSnap's SQLite library or user defaults.
-- Annotated PNG exports are written only when you trigger an export action.
-- Drag export creates a temporary file for the active drag session and also writes an archived copy to `~/Pictures/QuickSnap`.
-- The selected annotation color is stored in macOS user defaults so the app can restore the last-used color.
+- captured images in the configured capture storage root
+- a local SQLite library with capture metadata, OCR text, tags, annotations, chat history, and wiki ingest metadata
+- generated Markdown files in the configured Markdown output folder
+- wiki files under the Markdown storage root
+- the selected annotation color and similar app preferences in macOS user defaults
+
+## Credentials and tokens
+
+- OpenAI API keys are stored in the macOS Keychain.
+- GitHub personal access tokens are stored in the macOS Keychain.
+- QuickSnap does not store those secrets in its SQLite library.
+
+## What QuickSnap sends over the network
+
+QuickSnap sends nothing to a QuickSnap server because there is no QuickSnap cloud service.
+
+Network activity only happens when you explicitly use an external integration such as:
+
+- OpenAI-backed Markdown cleanup or wiki ingest
+- browser fetch/extraction paths for web clipping
+- opening GitHub issue drafts in the browser
 
 ## What QuickSnap does not do
 
-- It does not upload screenshots or annotations.
-- It does not collect account data.
-- It does not run background sync jobs.
-- It does not bundle third-party SDKs.
+- It does not run background sync.
+- It does not upload your library automatically.
+- It does not create analytics or tracking profiles.
+- It does not bundle third-party telemetry SDKs.
 
-If you enable BYO AI analysis with your own OpenAI API key, the selected capture image and related metadata may be sent to OpenAI only when you explicitly run Analyze.
+## Retention
 
-## Retention and local storage
-
-- Temporary drag-export files are created in the system temporary directory for the active drag session.
-- Stored captures and their local search index remain in QuickSnap's configured storage location until you remove that app data.
-- Archived exports remain in `~/Pictures/QuickSnap` until you remove them.
+- stored captures remain on disk until you remove the app data or delete the storage folder
+- Markdown files remain in the configured Markdown folder until you remove them
+- wiki files remain in the wiki directory until you remove them
+- temporary export files are created only for the active export/drag flow and may be removed by the system later

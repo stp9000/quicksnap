@@ -17,7 +17,7 @@ jobs:
         run: swift --version
 
       - name: Validate shell scripts
-        run: bash -n scripts/build_app.sh scripts/package_release.sh scripts/notarize_app.sh
+        run: bash -n scripts/build_app.sh scripts/package_release.sh scripts/notarize_app.sh scripts/release_notarized.sh
 
       - name: Build debug
         run: swift build
@@ -25,5 +25,5 @@ jobs:
       - name: Build release
         run: swift build -c release
 
-      - name: Verify unsigned package flow
-        run: ./scripts/package_release.sh
+      - name: Verify app bundle packaging
+        run: ./scripts/build_app.sh

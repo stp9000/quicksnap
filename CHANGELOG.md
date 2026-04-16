@@ -6,33 +6,24 @@ The format is based on Keep a Changelog, and QuickSnap uses semantic versions fo
 
 ## [Unreleased]
 
-### Added
-- Added a tag-triggered GitHub Release workflow that publishes the unsigned macOS zip from `VERSION` and `CHANGELOG.md`.
-
 ### Changed
-- Consolidated release versioning around the `VERSION` file and removed redundant repo assets/docs.
+- Reframed the public docs around the current app: local-first capture library, Markdown export, wiki ingest, and GitHub issue drafting.
+- Cleaned the repository for open-source release readiness by removing generated SwiftPM Xcode workspace files and clarifying release/install guidance.
+- Updated release guidance so public releases center the notarized macOS archive and use a manual maintainer-driven release flow.
 
 ## [0.1.4] - 2026-03-15
 
 ### Added
-- Added a persistent capture library with SQLite-backed metadata, OCR indexing, browser URL capture, and searchable history.
-- Added a right-side workspace panel for manual local or OpenAI-powered analysis plus send-preview workflows.
-- Added browser-based GitHub issue sending through prefilled `issues/new` URLs with configurable owner, repo, and labels.
-- Added a themed Settings window for storage, AI, GitHub, and custom preset configuration.
-- Added release, privacy, architecture, roadmap, Apple-readiness, and GitHub setup documentation along with packaging/notarization scripts and GitHub workflows.
+- Persistent capture library with SQLite-backed metadata, OCR indexing, browser URL capture, and searchable history.
+- Markdown capture flow with separate Markdown storage and browser-aware clipping.
+- Wiki ingest support that turns captures into local Markdown wiki pages.
+- GitHub issue drafting from bug-report captures.
+- Packaging, privacy, security, and release documentation.
 
 ### Changed
-- Refocused QuickSnap around `General` and `Bug Report` presets, with older `UI Issue` captures treated as `Bug Report`.
-- Updated capture cards to use source-based display IDs like `Safari - QS00001` and removed OCR snippet text from the library cards.
-- Changed the workspace behavior so opening the side panel no longer auto-runs analysis; analysis is now triggered manually.
-- Improved custom preset templates so added field names automatically append matching placeholders.
+- Simplified the workspace panel and artifact flow around Markdown and GitHub issue outputs.
+- Improved helper packaging so the app can bundle the runtime needed for Markdown extraction.
 
 ### Fixed
-- Normalized metadata collection across full-screen, selection, and window capture flows so they share the same baseline enrichment path.
-- Fixed OpenAI BYO-key connection handling and surfaced clearer connection feedback in Settings.
-- Improved browser metadata capture with page title and viewport enrichment when supported.
-
-## [0.1.3] - 2026-03-11
-
-### Added
-- Repository governance and Apple-readiness documentation.
+- Reduced redundant export/file-writing behavior during drag/export flows.
+- Improved Markdown fallback behavior for selections and OCR-driven captures.

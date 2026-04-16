@@ -5,11 +5,12 @@ Thanks for contributing.
 ## Development setup
 
 1. Use macOS 13+ with Swift toolchain and `iconutil` available.
-2. Build locally:
+2. Install Node.js if you need to package the app bundle locally.
+3. Build locally:
    ```bash
    swift build
    ```
-3. Run locally:
+4. Run locally:
    ```bash
    swift run
    ```
@@ -34,7 +35,7 @@ swift build -c release
 For release work, also verify:
 
 ```bash
-./scripts/package_release.sh
+./scripts/build_app.sh
 ```
 
 ## Coding conventions
@@ -57,9 +58,11 @@ For release-related PRs, include:
 - Use a separate build number for `CFBundleVersion`.
 - Update `CHANGELOG.md` with the release notes for the version being shipped.
 - Tag releases as `v<version>` after release notes are finalized.
-- Validate release packaging locally with:
+- Validate the app locally before cutting a release:
   ```bash
   swift build
   swift build -c release
-  ./scripts/package_release.sh
+  ./scripts/build_app.sh
   ```
+- Public releases should publish the notarized archive, not the unsigned dev package.
+- Signed releases are currently produced manually by a maintainer on macOS.

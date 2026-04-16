@@ -8,7 +8,6 @@ APP_VERSION="${APP_VERSION:-$DEFAULT_APP_VERSION}"
 BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
 
 : "${DEVELOPER_ID_APPLICATION:?Set DEVELOPER_ID_APPLICATION to your Developer ID Application certificate name.}"
-: "${NOTARY_PROFILE:?Set NOTARY_PROFILE to a notarytool keychain profile name.}"
 
 cd "$ROOT_DIR"
 
