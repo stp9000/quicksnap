@@ -10,6 +10,7 @@ APP_PATH="$ROOT_DIR/build/${APP_NAME}.app"
 DIST_DIR="$ROOT_DIR/dist"
 ZIP_PATH="$DIST_DIR/${APP_NAME}-v${APP_VERSION}-macOS-signed.zip"
 NOTARIZED_ZIP_PATH="$DIST_DIR/${APP_NAME}-v${APP_VERSION}-macOS-notarized.zip"
+HELPER_RUNTIME_DIR="$APP_PATH/Contents/Resources/HelperRuntime"
 
 : "${DEVELOPER_ID_APPLICATION:?Set DEVELOPER_ID_APPLICATION to your Developer ID Application certificate name.}"
 
@@ -36,7 +37,18 @@ resolve_notary_profile() {
 
 NOTARY_PROFILE_RESOLVED="$(resolve_notary_profile)"
 
-codesign --force --options runtime --timestamp --deep --sign "$DEVELOPER_ID_APPLICATION" "$APP_PATH"
+sign_binary() {
+  local path="$1"
+  codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID_APPLICATION" "$path"
+}
+
+if [[ -d "$HELPER_RUNTIME_DIR" ]]; then
+  while IFS= read -r -d '' binary_path; do
+    sign_binary "$binary_path"
+  done < <(find "$HELPER_RUNTIME_DIR" -type f \( -name "*.dylib" -o -name "node" \) -print0 | sort -z)
+fi
+
+codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID_APPLICATION" "$APP_PATH"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
 mkdir -p "$DIST_DIR"
