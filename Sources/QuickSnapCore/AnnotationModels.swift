@@ -49,11 +49,6 @@ struct Stroke: Identifiable {
     var lineWidth: CGFloat
 }
 
-enum ShapeKind: String, Codable {
-    case rectangle
-    case arrow
-}
-
 struct ShapeAnnotation: Identifiable {
     var id = UUID()
     var kind: ShapeKind
@@ -69,45 +64,6 @@ struct TextAnnotation: Identifiable {
     var position: CGPoint
     var color: NSColor
     var fontSize: CGFloat
-}
-
-struct PersistedCaptureAnnotations: Codable, Hashable {
-    var strokes: [PersistedStroke] = []
-    var shapes: [PersistedShape] = []
-    var texts: [PersistedTextAnnotation] = []
-
-    var isEmpty: Bool {
-        strokes.isEmpty && shapes.isEmpty && texts.isEmpty
-    }
-}
-
-struct PersistedPoint: Codable, Hashable {
-    var x: Double
-    var y: Double
-}
-
-struct PersistedStroke: Codable, Hashable {
-    var id: String
-    var points: [PersistedPoint]
-    var colorHex: String
-    var lineWidth: Double
-}
-
-struct PersistedShape: Codable, Hashable {
-    var id: String
-    var kind: ShapeKind
-    var start: PersistedPoint
-    var end: PersistedPoint
-    var colorHex: String
-    var lineWidth: Double
-}
-
-struct PersistedTextAnnotation: Codable, Hashable {
-    var id: String
-    var text: String
-    var position: PersistedPoint
-    var colorHex: String
-    var fontSize: Double
 }
 
 enum SelectedAnnotation: Equatable {
