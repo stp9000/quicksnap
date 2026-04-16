@@ -14,7 +14,6 @@ struct CapturePresetPayload: Codable, Hashable {
     var errorMessage: String = ""
     var stackTrace: String = ""
     var pageTitle: String = ""
-    var generatedMarkdown: String = ""
     var clippedMarkdownContent: String = ""
     var markdownClipStatus: String = ""
     var markdownExtractionEngine: String = ""
@@ -34,7 +33,6 @@ struct CapturePresetPayload: Codable, Hashable {
     var sourceURL: String = ""
     var tableColumns: [String] = []
     var tableRows: [[String]] = []
-    var customFields: [String: String] = [:]
 
     var primaryURL: String? {
         let candidates = [canonicalURL, urlString, sourceURL]
@@ -42,17 +40,9 @@ struct CapturePresetPayload: Codable, Hashable {
     }
 }
 
-struct CustomCapturePresetDefinition: Identifiable, Codable, Hashable {
-    let id: String
-    var name: String
-    var fieldNames: [String]
-    var exportTemplate: String
-}
-
 struct CapturePresetDefinition: Identifiable, Hashable {
     enum ExportMode: String, Hashable {
         case markdown
-        case issueDraft
         case githubIssueURL
     }
 
@@ -62,8 +52,6 @@ struct CapturePresetDefinition: Identifiable, Hashable {
     let expectedFields: [String]
     let exportModes: [ExportMode]
     let supportsAIEnrichment: Bool
-    let isCustom: Bool
-    let customDefinition: CustomCapturePresetDefinition?
 
     static let general = CapturePresetDefinition(
         id: "general",
@@ -71,9 +59,7 @@ struct CapturePresetDefinition: Identifiable, Hashable {
         description: "Default structured screenshot capture.",
         expectedFields: [],
         exportModes: [.markdown],
-        supportsAIEnrichment: true,
-        isCustom: false,
-        customDefinition: nil
+        supportsAIEnrichment: true
     )
 
     static let uiIssue = CapturePresetDefinition(
@@ -81,10 +67,8 @@ struct CapturePresetDefinition: Identifiable, Hashable {
         name: "Bug Report",
         description: "Capture a bug report with reproduction context.",
         expectedFields: ["URL", "Browser", "Viewport", "Console Summary"],
-        exportModes: [.markdown, .issueDraft, .githubIssueURL],
-        supportsAIEnrichment: true,
-        isCustom: false,
-        customDefinition: nil
+        exportModes: [.markdown, .githubIssueURL],
+        supportsAIEnrichment: true
     )
 
     static let markdown = CapturePresetDefinition(
@@ -93,9 +77,7 @@ struct CapturePresetDefinition: Identifiable, Hashable {
         description: "Capture a web page into a reusable Markdown document.",
         expectedFields: ["URL", "Page Title", "Clip Status"],
         exportModes: [.markdown],
-        supportsAIEnrichment: true,
-        isCustom: false,
-        customDefinition: nil
+        supportsAIEnrichment: true
     )
 
     static let builtin: [CapturePresetDefinition] = [
@@ -103,17 +85,4 @@ struct CapturePresetDefinition: Identifiable, Hashable {
         .markdown,
         .uiIssue
     ]
-
-    static func from(custom definition: CustomCapturePresetDefinition) -> CapturePresetDefinition {
-        CapturePresetDefinition(
-            id: definition.id,
-            name: definition.name,
-            description: "Custom preset",
-            expectedFields: definition.fieldNames,
-            exportModes: [.markdown],
-            supportsAIEnrichment: false,
-            isCustom: true,
-            customDefinition: definition
-        )
-    }
 }

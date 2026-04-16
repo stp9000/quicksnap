@@ -65,7 +65,7 @@ Note: Permission usually persists for the installed app. If you install a new un
 
 ## Privacy & Data Handling
 
-QuickSnap processes captures and annotations locally on-device. Screen captures are stored in a local library you can configure in Settings, exports are written only when you trigger them, and drag export also archives a copy under `~/Pictures/QuickSnap`.
+QuickSnap processes captures and annotations locally on-device. Screen captures are stored in a local library you can configure in Settings, and exports are written only when you trigger them.
 
 See [Privacy and Permissions](PRIVACY.md) for the full permissions, storage, and disclosure summary.
 

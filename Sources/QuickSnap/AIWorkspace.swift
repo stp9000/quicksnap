@@ -16,13 +16,6 @@ enum CaptureAnalysisStatus: String, Codable, CaseIterable {
     }
 }
 
-enum WorkspacePanelMode: String, CaseIterable, Identifiable {
-    case analyze = "Analyze"
-    case send = "Send"
-
-    var id: String { rawValue }
-}
-
 enum SubmissionTarget: String, Codable, CaseIterable, Identifiable {
     case github
     case jira
@@ -95,29 +88,23 @@ struct CaptureChatMessage: Identifiable, Codable, Hashable {
 }
 
 enum SendPreviewKind: String, CaseIterable, Identifiable {
-    case filePath
-    case markdownSnippet
     case markdownDocument
-    case issueDraft
     case githubIssueURL
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .filePath: return "File Path"
-        case .markdownSnippet: return "Markdown Snippet"
-        case .markdownDocument: return "Markdown Document"
-        case .issueDraft: return "Issue Draft"
-        case .githubIssueURL: return "GitHub Issue URL"
+        case .markdownDocument: return "Markdown"
+        case .githubIssueURL: return "GitHub Issue"
         }
     }
 
     var usesMonospace: Bool {
         switch self {
-        case .markdownSnippet, .markdownDocument:
+        case .markdownDocument:
             return false
-        case .filePath, .issueDraft, .githubIssueURL:
+        case .githubIssueURL:
             return true
         }
     }

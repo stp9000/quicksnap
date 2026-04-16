@@ -9,6 +9,103 @@ DEFAULT_APP_VERSION="$(tr -d '\n' < "$VERSION_FILE")"
 APP_VERSION="${APP_VERSION:-$DEFAULT_APP_VERSION}"
 BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
 HELPER_DIR="$ROOT_DIR/Vendor/ObsidianClipperHelper"
+
+resolve_realpath() {
+  perl -MCwd=abs_path -e 'print abs_path(shift)' "$1"
+}
+
+resolve_dependency_path() {
+  local dependency="$1"
+  local source_binary="$2"
+  local real_binary
+  real_binary="$(resolve_realpath "$source_binary")"
+  local binary_directory
+  binary_directory="$(dirname "$real_binary")"
+
+  if [[ "$dependency" == @rpath/* ]]; then
+    local prefix_directory
+    prefix_directory="$(cd "$binary_directory/.." && pwd)"
+    local candidate="$prefix_directory/lib/${dependency#@rpath/}"
+    if [ -f "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+
+  if [[ "$dependency" == @loader_path/* ]]; then
+    local candidate="$binary_directory/${dependency#@loader_path/}"
+    if [ -f "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+
+  if [[ "$dependency" == @executable_path/* ]]; then
+    local candidate="$binary_directory/${dependency#@executable_path/}"
+    if [ -f "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+
+  if [ -f "$dependency" ]; then
+    printf '%s\n' "$dependency"
+    return 0
+  fi
+
+  return 1
+}
+
+bundle_binary_dependencies() {
+  local source_binary="$1"
+  local target_binary="$2"
+  local runtime_directory="$3"
+  local dependency
+
+  while IFS= read -r dependency; do
+    [ -z "$dependency" ] && continue
+    case "$dependency" in
+      /System/*|/usr/lib/*)
+        continue
+        ;;
+    esac
+
+    local resolved_dependency
+    if ! resolved_dependency="$(resolve_dependency_path "$dependency" "$source_binary")"; then
+      echo "Error: could not resolve runtime dependency '$dependency' for $source_binary" >&2
+      exit 1
+    fi
+
+    local dependency_name
+    dependency_name="$(basename "$resolved_dependency")"
+    local bundled_dependency="$runtime_directory/$dependency_name"
+
+    if [ ! -f "$bundled_dependency" ]; then
+      cp "$resolved_dependency" "$bundled_dependency"
+      chmod +w "$bundled_dependency"
+      if [[ "$dependency_name" == *.dylib ]]; then
+        install_name_tool -id "@loader_path/$dependency_name" "$bundled_dependency"
+      fi
+      bundle_binary_dependencies "$resolved_dependency" "$bundled_dependency" "$runtime_directory"
+    fi
+
+    install_name_tool -change "$dependency" "@loader_path/$dependency_name" "$target_binary"
+  done < <(otool -L "$source_binary" | tail -n +2 | awk '{print $1}')
+}
+
+bundle_node_runtime() {
+  local source_node="$1"
+  local runtime_directory="$2"
+  local real_node
+  real_node="$(resolve_realpath "$source_node")"
+
+  cp "$real_node" "$runtime_directory/node"
+  chmod +w "$runtime_directory/node"
+  chmod +x "$runtime_directory/node"
+
+  bundle_binary_dependencies "$real_node" "$runtime_directory/node" "$runtime_directory"
+}
+
 cd "$ROOT_DIR"
 
 swift scripts/generate_icon.swift
@@ -57,8 +154,7 @@ if [ -z "$NODE_BINARY" ] || [ ! -x "$NODE_BINARY" ]; then
   exit 1
 fi
 
-cp "$NODE_BINARY" "$HELPER_RUNTIME_DIR/node"
-chmod +x "$HELPER_RUNTIME_DIR/node"
+bundle_node_runtime "$NODE_BINARY" "$HELPER_RUNTIME_DIR"
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

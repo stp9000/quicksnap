@@ -307,13 +307,7 @@ struct ContentView: View {
                 InspectorField(label: "Script Sources", value: capture.presetPayload.scriptSources.joined(separator: "\n"))
             ] + wikiFields
         default:
-            if let custom = capture.presetDefinition.customDefinition {
-                detailFields = custom.fieldNames.map { field in
-                    InspectorField(label: field, value: capture.presetPayload.customFields[field, default: ""])
-                } + wikiFields
-            } else {
-                detailFields = wikiFields
-            }
+            detailFields = wikiFields
         }
 
         let fields = inspectorShowsAllFields ? baseFields + detailFields : baseFields
@@ -370,12 +364,11 @@ struct ContentView: View {
     private var workspacePanel: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Picker("Workspace", selection: $document.rightPanelMode) {
-                    ForEach(WorkspacePanelMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
+                Text("Workspace")
+                    .font(skin.primaryFont(size: 13))
+                    .foregroundColor(skin.accent)
+
+                Spacer(minLength: 0)
 
                 Button {
                     document.closeRightPanel()
@@ -395,274 +388,129 @@ struct ContentView: View {
                 .fill(skin.isModern ? skin.border : skin.separator)
                 .frame(height: 1)
 
-            Group {
-                if document.rightPanelMode == .analyze {
-                    analysisPanelContent
-                } else {
-                    sendPanelContent
-                }
-            }
+            sendPanelContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(sidebarBackground)
         }
         .background(sidebarBackground)
     }
 
-    private var analysisPanelContent: some View {
+    private var sendPanelContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Analyze")
-                    .font(skin.primaryFont(size: 13))
-                    .foregroundColor(skin.accent)
-
                 if let capture = document.selectedCapture {
-                    HStack(spacing: 12) {
-                        Button("Run Local Analysis") {
-                            document.runLocalAnalysisForSelectedCapture()
-                        }
-                        .buttonStyle(currentButtonStyle())
-
-                        Button("Run AI Analysis") {
-                            document.runAIAnalysisForSelectedCapture()
-                        }
-                        .buttonStyle(currentButtonStyle())
-                        .disabled(!document.canRunAIAnalysis)
-                    }
-
-                    if capture.isAnalysisStale {
-                        Text("Stored analysis was created for a different preset and may be stale.")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
-
-                    switch capture.analysis.status {
-                    case .idle:
-                        Text("No analysis yet for this capture.")
-                            .font(.caption)
-                            .foregroundColor(skin.textSecondary)
-                    case .pending:
-                        HStack(spacing: 8) {
-                            ProgressView()
-                            Text("Analyzing selected capture...")
-                                .font(.caption)
-                                .foregroundColor(skin.textSecondary)
-                        }
-                    case .failed:
-                        Text(document.analysisErrorMessage ?? "Analysis failed for this capture.")
-                            .font(.caption)
-                            .foregroundColor(.red.opacity(0.9))
-                    case .complete:
-                        HStack(spacing: 10) {
-                            if !capture.analysis.severity.isEmpty {
-                                analysisBadge(capture.analysis.severity.capitalized, tint: Color.orange.opacity(0.18), textColor: Color.orange)
-                            }
-                            analysisBadge(capture.presetDefinition.name, tint: skin.accent.opacity(0.14), textColor: skin.accent)
-                        }
-                        if !capture.analysis.issueTitle.isEmpty {
-                            analysisHeadlineBlock(label: "Issue Title", value: capture.analysis.issueTitle)
-                        }
-                        analysisHeadlineBlock(label: "Summary", value: capture.analysis.summary)
-                        if !capture.analysis.tags.isEmpty {
-                            analysisTagsBlock(capture.analysis.tags)
-                        }
-                        if !capture.analysis.recommendedActions.isEmpty {
-                            analysisRecommendedActionsBlock(capture.analysis.recommendedActions)
-                        }
-                    }
-                } else {
-                    Text("Select a stored capture to analyze.")
-                        .font(.caption)
-                        .foregroundColor(skin.textSecondary)
+                    workspaceCaptureHeader(capture: capture)
                 }
-            }
-            .padding(16)
-        }
-    }
 
-    private func analysisHeadlineBlock(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.caption2)
-                .foregroundColor(skin.textSecondary)
-            Text(value.isEmpty ? "Unavailable" : value)
-                .font(.system(size: label == "Issue Title" ? 13 : 12, weight: label == "Issue Title" ? .semibold : .medium))
-                .foregroundColor(.primary)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-        }
-    }
-
-    private func analysisBadge(_ text: String, tint: Color, textColor: Color) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(textColor)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(tint)
-            .clipShape(Capsule())
-    }
-
-    private func analysisTagsBlock(_ tags: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Tags")
-                .font(.caption2)
-                .foregroundColor(skin.textSecondary)
-            FlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
-                ForEach(tags, id: \.self) { tag in
-                    Text(tag)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(skin.textSecondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                Picker("Artifact", selection: $document.selectedSendPreviewKind) {
+                    Text("Markdown").tag(SendPreviewKind.markdownDocument)
+                    if document.canSendToGitHub {
+                        Text("GitHub Issue").tag(SendPreviewKind.githubIssueURL)
+                    }
                 }
-            }
-        }
-    }
+                .pickerStyle(.menu)
 
-    private func analysisRecommendedActionsBlock(_ actions: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Recommended Actions")
-                .font(.caption2)
-                .foregroundColor(skin.textSecondary)
-            ForEach(actions, id: \.self) { action in
-                HStack(spacing: 10) {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(skin.accent.opacity(0.7), lineWidth: 1.5)
-                        .frame(width: 18, height: 18)
-                    Text(action)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.primary)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 12)
-                .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-        }
-    }
-
-    private var sendPanelContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(document.selectedPreviewTitle)
-                    .font(skin.primaryFont(size: 13))
-                    .foregroundColor(skin.accent)
-                Spacer()
                 if document.selectedPreviewText != nil {
-                    Button("Copy") {
-                        document.copySelectedPreviewArtifact()
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundColor(skin.accent)
-
-                    if document.selectedSendPreviewKind == .markdownDocument {
-                        Button("Export") {
-                            document.exportSelectedPreviewArtifactIfAvailable()
+                    FlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
+                        workspacePillButton("Copy") {
+                            document.copySelectedPreviewArtifact()
                         }
-                        .buttonStyle(.borderless)
-                        .foregroundColor(skin.accent)
-                    }
 
-                    if document.selectedSendPreviewKind == .githubIssueURL && document.canSendToGitHub {
-                        Button("Review") {
-                            document.openBugReportSubmissionSheet()
+                        if document.selectedSendPreviewKind == .markdownDocument {
+                            workspacePillButton("Export") {
+                                document.exportSelectedPreviewArtifactIfAvailable()
+                            }
                         }
-                        .buttonStyle(.borderless)
-                        .foregroundColor(skin.accent)
 
-                        Button("Copy Screenshot") {
-                            document.copySelectedCaptureImageForGitHub()
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundColor(skin.accent)
-
-                        Button("Send to GitHub") {
-                            document.openSelectedCaptureGitHubIssue()
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundColor(skin.accent)
-                    }
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-
-            if let capture = document.selectedCapture {
-                workspaceCaptureHeader(capture: capture)
-                    .padding(.horizontal, 16)
-            }
-
-            Picker("Artifact", selection: $document.selectedSendPreviewKind) {
-                Text("File Path").tag(SendPreviewKind.filePath)
-                Text("Markdown Snippet").tag(SendPreviewKind.markdownSnippet)
-                Text("Markdown Document").tag(SendPreviewKind.markdownDocument)
-                if document.canExportIssueDraft {
-                    Text("Issue Draft").tag(SendPreviewKind.issueDraft)
-                }
-                if document.canSendToGitHub {
-                    Text("GitHub Issue URL").tag(SendPreviewKind.githubIssueURL)
-                }
-            }
-            .pickerStyle(.menu)
-            .padding(.horizontal, 16)
-
-            Group {
-                if let previewText = document.selectedPreviewText {
-                    VStack(alignment: .leading, spacing: 10) {
-                        if document.selectedSendPreviewKind == .githubIssueURL {
-                            Text("QuickSnap will copy the current screenshot to your clipboard and open a prefilled GitHub new-issue page with the draft title, body, and labels.")
-                                .font(.caption)
-                                .foregroundColor(skin.textSecondary)
-
-                            if let lastSubmittedIssueURL = document.lastSubmittedIssueURL, !lastSubmittedIssueURL.isEmpty {
-                                Text("Last opened issue URL")
-                                    .font(.caption2)
-                                    .foregroundColor(skin.textSecondary)
-                                Text(lastSubmittedIssueURL)
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                    .foregroundColor(.primary)
-                                    .textSelection(.enabled)
-                                    .fixedSize(horizontal: false, vertical: true)
+                        if document.selectedSendPreviewKind == .githubIssueURL && document.canSendToGitHub {
+                            workspacePillButton("Review") {
+                                document.openBugReportSubmissionSheet()
                             }
 
-                            if let submissionErrorMessage = document.submissionErrorMessage, !submissionErrorMessage.isEmpty {
-                                Text(submissionErrorMessage)
+                            workspacePillButton("Copy Screenshot") {
+                                document.copySelectedCaptureImageForGitHub()
+                            }
+
+                            workspacePillButton("Send to GitHub") {
+                                document.openSelectedCaptureGitHubIssue()
+                            }
+                        }
+                    }
+                }
+
+                Group {
+                    if let previewText = document.selectedPreviewText {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(document.selectedPreviewTitle)
+                                .font(skin.primaryFont(size: 13))
+                                .foregroundColor(skin.accent)
+
+                            if document.selectedSendPreviewKind == .githubIssueURL {
+                                Text("QuickSnap will copy the current screenshot to your clipboard and open a prefilled GitHub new-issue page with the draft title, body, and labels.")
                                     .font(.caption)
-                                    .foregroundColor(.red.opacity(0.9))
-                            }
-                        }
+                                    .foregroundColor(skin.textSecondary)
 
-                        ScrollView {
+                                if let lastSubmittedIssueURL = document.lastSubmittedIssueURL, !lastSubmittedIssueURL.isEmpty {
+                                    Text("Last opened issue URL")
+                                        .font(.caption2)
+                                        .foregroundColor(skin.textSecondary)
+                                    Text(lastSubmittedIssueURL)
+                                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                        .foregroundColor(.primary)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+
+                                if let submissionErrorMessage = document.submissionErrorMessage, !submissionErrorMessage.isEmpty {
+                                    Text(submissionErrorMessage)
+                                        .font(.caption)
+                                        .foregroundColor(.red.opacity(0.9))
+                                }
+                            }
+
                             Text(previewText)
                                 .font(.system(size: 11, weight: .medium, design: document.selectedSendPreviewKind.usesMonospace ? .monospaced : .default))
                                 .foregroundColor(.primary)
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(12)
+                                .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
-                        .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    } else if document.selectedCapture == nil {
+                        Text("Select a stored capture to preview workspace artifacts.")
+                            .font(.caption)
+                            .foregroundColor(skin.textSecondary)
+                    } else {
+                        Text("This workspace artifact is unavailable for the selected capture.")
+                            .font(.caption)
+                            .foregroundColor(skin.textSecondary)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 16)
-                } else if document.selectedCapture == nil {
-                    Text("Select a stored capture to preview send artifacts.")
-                        .font(.caption)
-                        .foregroundColor(skin.textSecondary)
-                        .padding(16)
-                } else {
-                    Text("This send artifact is unavailable for the selected capture.")
-                        .font(.caption)
-                        .foregroundColor(skin.textSecondary)
-                        .padding(16)
                 }
-            }
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
+            }
+            .padding(16)
         }
+    }
+
+    private func workspacePillButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(skin.accent)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule()
+                        .fill(Color.white.opacity(skin.isGlass ? 0.1 : 0.05))
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(skin.accent.opacity(0.22), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private func workspaceCaptureHeader(capture: CaptureRecord) -> some View {

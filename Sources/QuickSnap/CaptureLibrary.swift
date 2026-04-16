@@ -152,10 +152,6 @@ struct CaptureRecord: Identifiable, Hashable {
     }
 
     var markdownDocument: String {
-        if let customDefinition = presetDefinition.customDefinition {
-            return renderCustomMarkdown(using: customDefinition)
-        }
-
         switch normalizedPresetID {
         case "markdown":
             return markdownClipDocument
@@ -358,15 +354,8 @@ struct CaptureRecord: Identifiable, Hashable {
 
     func previewText(for kind: SendPreviewKind) -> String? {
         switch kind {
-        case .filePath:
-            return imagePath
-        case .markdownSnippet:
-            return markdownSnippet
         case .markdownDocument:
             return markdownDocument
-        case .issueDraft:
-            guard presetDefinition.exportModes.contains(.issueDraft) else { return nil }
-            return "# \(preferredBugReportTitle)\n\n\(preferredBugReportBody)"
         case .githubIssueURL:
             return githubIssueURLString
         }
@@ -565,25 +554,6 @@ struct CaptureRecord: Identifiable, Hashable {
             "",
             preferredBugReportBody
         ].joined(separator: "\n")
-    }
-
-    private func renderCustomMarkdown(using definition: CustomCapturePresetDefinition) -> String {
-        var text = definition.exportTemplate
-        let replacements: [String: String] = [
-            "capture_id": id,
-            "title": displayTitle,
-            "image_markdown": markdownSnippet,
-            "source": displaySubtitle,
-            "captured_at": Self.markdownTimestampFormatter.string(from: createdAt),
-            "dimensions": dimensionsText,
-            "ocr_text": ocrText,
-            "tags": tags.joined(separator: ", ")
-        ].merging(presetPayload.customFields) { _, new in new }
-
-        for (key, value) in replacements {
-            text = text.replacingOccurrences(of: "{{\(key)}}", with: value)
-        }
-        return text
     }
 
 }
@@ -1225,30 +1195,13 @@ final class CaptureRepository {
 }
 
 enum CapturePresetCatalog {
-    private static let customDefaultsKey = "quicksnap.customCapturePresets"
-
     static func allDefinitions() -> [CapturePresetDefinition] {
-        CapturePresetDefinition.builtin + loadCustomDefinitions().map(CapturePresetDefinition.from)
+        CapturePresetDefinition.builtin
     }
 
     static func definition(for id: String) -> CapturePresetDefinition {
         let resolvedID = id == "ui_issue" ? "bug_report" : id
         return allDefinitions().first(where: { $0.id == resolvedID }) ?? .general
-    }
-
-    static func loadCustomDefinitions() -> [CustomCapturePresetDefinition] {
-        guard let data = UserDefaults.standard.data(forKey: customDefaultsKey),
-              let definitions = try? JSONDecoder().decode([CustomCapturePresetDefinition].self, from: data) else {
-            return []
-        }
-        return definitions
-    }
-
-    static func saveCustomDefinitions(_ definitions: [CustomCapturePresetDefinition]) {
-        guard let data = try? JSONEncoder().encode(definitions) else {
-            return
-        }
-        UserDefaults.standard.set(data, forKey: customDefaultsKey)
     }
 }
 

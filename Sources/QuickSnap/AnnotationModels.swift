@@ -179,7 +179,6 @@ final class AnnotationDocument: ObservableObject {
     @Published var isWindowPickerPresented = false
     @Published var selectedCapturePayload = CapturePresetPayload()
     @Published var isRightPanelVisible = false
-    @Published var rightPanelMode: WorkspacePanelMode = .analyze
     @Published var selectedSendPreviewKind: SendPreviewKind = .markdownDocument
     @Published var selectedSubmissionTarget: SubmissionTarget = .github {
         didSet {
@@ -245,22 +244,12 @@ final class AnnotationDocument: ObservableObject {
     }
     @Published var jiraTokenDraft = ""
     @Published private(set) var hasSavedJiraToken = false
-    @Published var customPresetNameDraft = ""
-    @Published var customPresetFieldsDraft = ""
-    @Published var customPresetTemplateDraft = """
-# {{title}}
-
-{{image_markdown}}
-"""
     @Published var statusMessage = "Ready"
     @Published var libraryErrorMessage: String?
 
     private var annotationHistory: [SelectedAnnotation] = []
     private var allCaptures: [CaptureRecord] = []
     private var pendingAutoOpenSubmissionCaptureID: String?
-    private let defaultExportDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Pictures", isDirectory: true)
-        .appendingPathComponent("QuickSnap", isDirectory: true)
     private var captureRepository: CaptureRepository?
 
     init() {
@@ -346,12 +335,10 @@ final class AnnotationDocument: ObservableObject {
 
     var canCopyCaptureOutputs: Bool { selectedCapture != nil }
     var canCopyImage: Bool { backgroundImage != nil }
-    var canAnalyzeSelectedCapture: Bool { selectedCapture != nil }
-    var canRunAIAnalysis: Bool { aiFeaturesEnabled && selectedCapture != nil }
     var canIngestSelectedCaptureToWiki: Bool { selectedCapture != nil }
     var canExportIssueDraft: Bool {
         guard let selectedCapture else { return false }
-        return selectedCapture.presetDefinition.exportModes.contains(.issueDraft)
+        return selectedCapture.normalizedPresetID == "bug_report"
     }
     var canSendToGitHub: Bool {
         guard let selectedCapture else { return false }
@@ -504,8 +491,8 @@ final class AnnotationDocument: ObservableObject {
         statusMessage = "Loaded \(capture.displayTitle)"
     }
 
-    func openWorkspacePanel(mode: WorkspacePanelMode = .analyze) {
-        rightPanelMode = mode
+    func openWorkspacePanel() {
+        normalizeSelectedSendPreviewKind()
         isRightPanelVisible = true
     }
 
@@ -520,23 +507,15 @@ final class AnnotationDocument: ObservableObject {
         isBugReportSubmissionSheetPresented = true
     }
 
-    func showAnalyzePanel() {
-        rightPanelMode = .analyze
-        isRightPanelVisible = true
-    }
-
-    func openSendPreview(_ kind: SendPreviewKind) {
-        guard selectedCapture != nil else { return }
-        if kind == .githubIssueURL {
-            prepareBugReportDraftForSelectedCapture()
-        }
-        selectedSendPreviewKind = kind
-        rightPanelMode = .send
-        isRightPanelVisible = true
-    }
-
     func closeRightPanel() {
         isRightPanelVisible = false
+    }
+
+    func normalizeSelectedSendPreviewKind() {
+        if selectedSendPreviewKind == .githubIssueURL && canSendToGitHub {
+            return
+        }
+        selectedSendPreviewKind = .markdownDocument
     }
 
     func runAIAnalysisForSelectedCapture() {
@@ -832,7 +811,6 @@ final class AnnotationDocument: ObservableObject {
 
         do {
             try pngData.write(to: tempURL, options: .atomic)
-            archiveExportPNGInBackground(pngData: pngData, fileName: fileName)
             return tempURL
         } catch {
             NSSound.beep()
@@ -848,36 +826,12 @@ final class AnnotationDocument: ObservableObject {
         statusMessage = statusText
     }
 
-    func copyCurrentCaptureFilePath() {
-        guard let selectedCapture else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(selectedCapture.imagePath, forType: .string)
-        statusMessage = "Copied capture file path"
-    }
-
     func copySelectedPreviewArtifact() {
         guard let previewText = selectedPreviewText else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(previewText, forType: .string)
         statusMessage = "Copied \(selectedSendPreviewKind.displayName)"
-    }
-
-    func copyCurrentCaptureMarkdown() {
-        guard let selectedCapture else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(selectedCapture.markdownSnippet, forType: .string)
-        statusMessage = "Copied Markdown snippet"
-    }
-
-    func copyCurrentCaptureMarkdownDocument() {
-        guard let selectedCapture else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(selectedCapture.markdownDocument, forType: .string)
-        statusMessage = "Copied Markdown document"
     }
 
     func exportCurrentCaptureMarkdownDocument() {
@@ -1210,58 +1164,10 @@ final class AnnotationDocument: ObservableObject {
         }
     }
 
-    func addCustomPreset() {
-        let trimmedName = customPresetNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else { return }
-
-        let fields = parsedCustomPresetFields()
-
-        var existing = CapturePresetCatalog.loadCustomDefinitions()
-        let template = generatedCustomTemplate(baseTemplate: customPresetTemplateDraft, fieldNames: fields)
-        let definition = CustomCapturePresetDefinition(
-            id: "custom_\(UUID().uuidString.lowercased())",
-            name: trimmedName,
-            fieldNames: fields,
-            exportTemplate: template
-        )
-        existing.append(definition)
-        CapturePresetCatalog.saveCustomDefinitions(existing)
-        reloadPresetDefinitions()
-        selectedPresetID = definition.id
-        customPresetNameDraft = ""
-        customPresetFieldsDraft = ""
-        customPresetTemplateDraft = "# {{title}}\n\n{{image_markdown}}"
-        statusMessage = "Added custom preset"
-    }
-
-    func syncCustomPresetTemplateWithFields() {
-        customPresetTemplateDraft = generatedCustomTemplate(
-            baseTemplate: customPresetTemplateDraft,
-            fieldNames: parsedCustomPresetFields()
-        )
-    }
-
-    func removeCustomPreset(_ definition: CustomCapturePresetDefinition) {
-        let updated = CapturePresetCatalog.loadCustomDefinitions().filter { $0.id != definition.id }
-        CapturePresetCatalog.saveCustomDefinitions(updated)
-        reloadPresetDefinitions()
-        if selectedPresetID == definition.id {
-            selectedPresetID = "general"
-        }
-        statusMessage = "Removed custom preset"
-    }
-
     func payloadBinding(for keyPath: WritableKeyPath<CapturePresetPayload, String>) -> Binding<String> {
         Binding(
             get: { self.selectedCapturePayload[keyPath: keyPath] },
             set: { self.selectedCapturePayload[keyPath: keyPath] = $0 }
-        )
-    }
-
-    func customFieldBinding(named fieldName: String) -> Binding<String> {
-        Binding(
-            get: { self.selectedCapturePayload.customFields[fieldName, default: ""] },
-            set: { self.selectedCapturePayload.customFields[fieldName] = $0 }
         )
     }
 
@@ -1580,11 +1486,7 @@ final class AnnotationDocument: ObservableObject {
     }
 
     private func payloadAdjustedForSelectedPreset(from payload: CapturePresetPayload) -> CapturePresetPayload {
-        var payload = payload
-        if !selectedPresetDefinition.isCustom {
-            payload.customFields = [:]
-        }
-        return payload
+        payload
     }
 
     private func initialPayload(for presetID: String, capturedURL: String?, browserMetadata: BrowserDebugMetadata?, pageClip: BrowserPageClipPayload?) -> CapturePresetPayload {
@@ -1740,7 +1642,7 @@ final class AnnotationDocument: ObservableObject {
             } else {
                 payload.clippedMarkdownContent = fallbackMarkdownBody(for: capture, pageClip: pageClip)
                 payload.markdownClipStatus = MarkdownClipStatus.fallback.rawValue
-                payload.markdownExtractionEngine = BrowserURLResolver.isSupportedBrowserApp(capture.sourceApp) ? "ocr_fallback" : "unavailable"
+                payload.markdownExtractionEngine = capture.sourceKind == .selection ? "selection_ocr" : (BrowserURLResolver.isSupportedBrowserApp(capture.sourceApp) ? "ocr_fallback" : "unavailable")
             }
         }
 
@@ -1779,14 +1681,19 @@ final class AnnotationDocument: ObservableObject {
         if let excerpt = pageClip?.excerpt, !excerpt.isEmpty {
             lines.append(excerpt)
         }
-        if !capture.ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let markdownFromOCR = markdownBodyFromRecognizedText(capture.ocrText)
+        if !markdownFromOCR.isEmpty {
             if !lines.isEmpty {
                 lines.append("")
             }
-            lines.append(capture.ocrText.trimmingCharacters(in: .whitespacesAndNewlines))
+            lines.append(markdownFromOCR)
         }
         if lines.isEmpty {
-            lines.append("No structured page text was available from this capture.")
+            if capture.sourceKind == .selection {
+                lines.append("QuickSnap is waiting for OCR so this selection can be turned into Markdown.")
+            } else {
+                lines.append("No structured page text was available from this capture.")
+            }
         }
         return lines.joined(separator: "\n\n")
     }
@@ -1958,27 +1865,6 @@ final class AnnotationDocument: ObservableObject {
             analysis: capture.analysis,
             chatMessages: capture.chatMessages
         )
-    }
-
-    private func generatedCustomTemplate(baseTemplate: String, fieldNames: [String]) -> String {
-        let trimmedBase = baseTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
-        var template = trimmedBase.isEmpty ? "# {{title}}\n\n{{image_markdown}}" : trimmedBase
-
-        for fieldName in fieldNames {
-            let placeholder = "{{\(fieldName)}}"
-            if !template.contains(placeholder) {
-                template.append("\n\n**\(fieldName):** \(placeholder)")
-            }
-        }
-
-        return template
-    }
-
-    private func parsedCustomPresetFields() -> [String] {
-        customPresetFieldsDraft
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
     }
 
     private func seedBugReportDraft(from capture: CaptureRecord?) {
@@ -2196,19 +2082,6 @@ final class AnnotationDocument: ObservableObject {
         return "QuickSnap-\(formatter.string(from: now))"
     }
 
-    private func archiveExportPNGInBackground(pngData: Data, fileName: String) {
-        let destinationDirectory = defaultExportDirectory
-        DispatchQueue.global(qos: .utility).async {
-            let destinationURL = destinationDirectory.appendingPathComponent(fileName)
-            do {
-                try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
-                try pngData.write(to: destinationURL, options: .atomic)
-            } catch {
-                return
-            }
-        }
-    }
-
     func addStroke(points: [CGPoint]) {
         guard points.count > 1 else { return }
         let stroke = Stroke(points: points, color: color, lineWidth: lineWidth)
@@ -2392,19 +2265,95 @@ private func enrichedPayload(for capture: CaptureRecord, recognizedText: String)
        payload.markdownExtractionEngine != "obsidian_clipper_helper" {
         let existing = payload.clippedMarkdownContent.trimmingCharacters(in: .whitespacesAndNewlines)
         let recognized = recognizedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !recognized.isEmpty && (existing.isEmpty || existing == "No structured page text was available from this capture.") {
-            payload.clippedMarkdownContent = recognized
+        let markdownFromOCR = markdownBodyFromRecognizedText(recognized)
+        let shouldPromoteOCR = !markdownFromOCR.isEmpty && (
+            existing.isEmpty ||
+            existing == "No structured page text was available from this capture." ||
+            existing == "QuickSnap is waiting for OCR so this selection can be turned into Markdown." ||
+            capture.sourceKind == .selection
+        )
+        if shouldPromoteOCR {
+            payload.clippedMarkdownContent = markdownFromOCR
             payload.markdownClipExcerpt = recognized
                 .split(separator: "\n")
                 .map(String.init)
                 .first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) ?? payload.markdownClipExcerpt
             payload.markdownClipStatus = MarkdownClipStatus.fallback.rawValue
-            payload.markdownExtractionEngine = "ocr_fallback"
+            payload.markdownExtractionEngine = capture.sourceKind == .selection ? "selection_ocr" : "ocr_fallback"
             didChange = true
         }
     }
 
     return didChange ? payload : nil
+}
+
+private func markdownBodyFromRecognizedText(_ text: String) -> String {
+    let lines = text
+        .components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+
+    guard !lines.isEmpty else { return "" }
+
+    var blocks: [String] = []
+    var paragraph: [String] = []
+
+    func flushParagraph() {
+        guard !paragraph.isEmpty else { return }
+        blocks.append(paragraph.joined(separator: " "))
+        paragraph.removeAll()
+    }
+
+    for line in lines {
+        if isLikelyMarkdownListLine(line) {
+            flushParagraph()
+            blocks.append(normalizedMarkdownListLine(line))
+        } else if isLikelyHeadingLine(line) {
+            flushParagraph()
+            blocks.append("## \(line)")
+        } else {
+            paragraph.append(line)
+        }
+    }
+
+    flushParagraph()
+    return blocks.joined(separator: "\n\n")
+}
+
+private func isLikelyHeadingLine(_ line: String) -> Bool {
+    guard line.count <= 80 else { return false }
+    guard !line.contains(". "), !line.contains(": ") else { return false }
+    let words = line.split(separator: " ")
+    guard !words.isEmpty && words.count <= 10 else { return false }
+    let uppercaseLetters = line.unicodeScalars.filter { CharacterSet.uppercaseLetters.contains($0) }.count
+    let lowercaseLetters = line.unicodeScalars.filter { CharacterSet.lowercaseLetters.contains($0) }.count
+    return uppercaseLetters > 0 && lowercaseLetters == 0
+}
+
+private func isLikelyMarkdownListLine(_ line: String) -> Bool {
+    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("• ") {
+        return true
+    }
+
+    let digits = trimmed.prefix { $0.isNumber }
+    if !digits.isEmpty {
+        let remainder = trimmed.dropFirst(digits.count)
+        return remainder.hasPrefix(". ") || remainder.hasPrefix(") ")
+    }
+
+    return false
+}
+
+private func normalizedMarkdownListLine(_ line: String) -> String {
+    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.hasPrefix("• ") {
+        return "- " + trimmed.dropFirst(2)
+    }
+    if trimmed.hasPrefix("* ") {
+        return "- " + trimmed.dropFirst(2)
+    }
+    return trimmed
 }
 
 private enum ConsoleSignalExtractor {
