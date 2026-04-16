@@ -8,6 +8,7 @@ Resources/AppIcon.iconset/
 .home/
 .tmp/
 dist/
+.swiftpm/xcode/
 Vendor/ObsidianClipperHelper/node_modules/
 Markdown/
 wiki/
