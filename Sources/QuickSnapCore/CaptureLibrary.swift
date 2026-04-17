@@ -82,6 +82,10 @@ struct CaptureRecord: Identifiable, Hashable {
     }
 
     var displayTitle: String {
+        let pageTitle = presetPayload.pageTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !pageTitle.isEmpty {
+            return pageTitle
+        }
         if !windowTitle.isEmpty {
             return windowTitle
         }
@@ -97,6 +101,17 @@ struct CaptureRecord: Identifiable, Hashable {
             return "\(sourceKind.displayName) · \(presetName)"
         }
         return "\(sourceApp) · \(presetName)"
+    }
+
+    var metadataBadgeTitle: String {
+        "\(presetDefinition.name) - \(displayIdentifier)"
+    }
+
+    var librarySourceSummary: String {
+        if !sourceApp.isEmpty {
+            return sourceApp
+        }
+        return sourceKind.displayName
     }
 
     var searchSummary: String {
@@ -433,6 +448,30 @@ struct CaptureRecord: Identifiable, Hashable {
     }
 
     func withPresetPayload(_ presetPayload: CapturePresetPayload) -> CaptureRecord {
+        CaptureRecord(
+            id: id,
+            displaySequence: displaySequence,
+            imagePath: imagePath,
+            createdAt: createdAt,
+            sourceApp: sourceApp,
+            windowTitle: windowTitle,
+            urlString: urlString,
+            ocrText: ocrText,
+            tags: tags,
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight,
+            sourceKind: sourceKind,
+            showsSelectionBorder: showsSelectionBorder,
+            ocrStatus: ocrStatus,
+            presetID: presetID,
+            presetPayload: presetPayload,
+            annotations: annotations,
+            analysis: analysis,
+            chatMessages: chatMessages
+        )
+    }
+
+    func withTags(_ tags: [String]) -> CaptureRecord {
         CaptureRecord(
             id: id,
             displaySequence: displaySequence,
@@ -863,6 +902,28 @@ final class CaptureRepository {
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw CaptureRepositoryError.executeFailed(lastErrorMessage(db))
             }
+        }
+    }
+
+    func deleteCapture(id captureID: String) throws {
+        let capture = try listCaptures(matching: "").first(where: { $0.id == captureID })
+
+        try withDatabase { db in
+            let sql = "DELETE FROM captures WHERE id = ?;"
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw CaptureRepositoryError.prepareFailed(lastErrorMessage(db))
+            }
+            defer { sqlite3_finalize(statement) }
+
+            bindText(captureID, to: 1, in: statement)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw CaptureRepositoryError.executeFailed(lastErrorMessage(db))
+            }
+        }
+
+        if let capture, FileManager.default.fileExists(atPath: capture.imagePath) {
+            try? FileManager.default.removeItem(atPath: capture.imagePath)
         }
     }
 
