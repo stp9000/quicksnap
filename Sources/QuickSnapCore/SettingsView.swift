@@ -180,6 +180,9 @@ struct SettingsView: View {
         }
         .background(settingsBackground)
         .frame(width: 700, height: 700)
+        .task {
+            document.refreshSavedCredentialState()
+        }
     }
 
     private func settingsCard<Content: View>(title: String, subtitle: String, @ViewBuilder content: () -> Content) -> some View {
