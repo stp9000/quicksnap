@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SwiftUI
 
 struct ContentView: View {
@@ -99,12 +100,14 @@ struct ContentView: View {
                         .background(sidebarBackground)
                     } else {
                         List(document.captures) { capture in
-                            Button {
-                                document.openCapture(capture)
-                            } label: {
-                                CaptureRowView(capture: capture, isSelected: document.selectedCaptureID == capture.id, timestamp: document.timelineTimestamp(for: capture), skin: skin)
-                            }
-                            .buttonStyle(.plain)
+                            CaptureRowView(
+                                capture: capture,
+                                isSelected: document.selectedCaptureID == capture.id,
+                                timestamp: document.timelineTimestamp(for: capture),
+                                skin: skin,
+                                onOpen: { document.openCapture(capture) },
+                                onDelete: { document.deleteCapture(capture) }
+                            )
                             .listRowInsets(EdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10))
                             .listRowBackground(Color.clear)
                         }
@@ -178,6 +181,17 @@ struct ContentView: View {
                     Text("Tags")
                         .font(.caption)
                         .foregroundColor(skin.textSecondary)
+                    FlowLayout(horizontalSpacing: 6, verticalSpacing: 6) {
+                        if capture.tags.isEmpty {
+                            Text("No tags yet")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(skin.textSecondary)
+                        } else {
+                            ForEach(capture.tags, id: \.self) { tag in
+                                tagPill(tag)
+                            }
+                        }
+                    }
                     TextField("comma, separated, tags", text: $document.selectedCaptureTagsText)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit {
@@ -245,6 +259,22 @@ struct ContentView: View {
                     .lineLimit(2)
             }
         }
+    }
+
+    private func tagPill(_ tag: String) -> some View {
+        Text(tag)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(skin.accent)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(Color.white.opacity(skin.isGlass ? 0.1 : 0.05))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(skin.accent.opacity(0.25), lineWidth: 1)
+            )
     }
 
     private func displayedInspectorFields(for capture: CaptureRecord) -> [InspectorField] {
@@ -515,20 +545,19 @@ struct ContentView: View {
 
     private func workspaceCaptureHeader(capture: CaptureRecord) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(capture.sourceDisplayLabel)
+            Text(capture.displayTitle)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.primary)
             Text(document.timelineTimestamp(for: capture))
                 .font(.caption2)
                 .foregroundColor(skin.textSecondary)
+            Text(capture.metadataBadgeTitle)
+                .font(.caption)
+                .foregroundColor(skin.textSecondary)
             if let primaryURL = capture.primaryURL, !primaryURL.isEmpty, let url = URL(string: primaryURL) {
                 Link(primaryURL, destination: url)
                     .font(.caption)
                     .lineLimit(1)
-            } else {
-                Text(capture.displaySubtitle)
-                    .font(.caption)
-                    .foregroundColor(skin.textSecondary)
             }
         }
         .padding(10)
@@ -1015,41 +1044,59 @@ private struct CaptureRowView: View {
     let isSelected: Bool
     let timestamp: String
     let skin: AppSkin
+    let onOpen: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(capture.sourceDisplayLabel)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(isSelected ? .white : .primary)
-                        .lineLimit(1)
-                    Text(rowSubtitle)
-                        .font(.system(size: 11))
-                        .foregroundColor(isSelected ? Color.white.opacity(0.85) : skin.textSecondary)
-                        .lineLimit(1)
+        HStack(alignment: .top, spacing: 10) {
+            CaptureThumbnailView(capture: capture)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(capture.displayTitle)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(isSelected ? .white : .primary)
+                            .lineLimit(2)
+                        Text(rowSubtitle)
+                            .font(.system(size: 11))
+                            .foregroundColor(isSelected ? Color.white.opacity(0.85) : skin.textSecondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    if !capture.fileExists {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                    }
                 }
 
-                Spacer(minLength: 8)
-
-                if !capture.fileExists {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
+                HStack {
+                    Text(timestamp)
+                    Spacer()
+                    Text(capture.metadataBadgeTitle)
+                    Spacer()
+                    Text(capture.dimensionsText)
                 }
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundColor(isSelected ? Color.white.opacity(0.78) : skin.accentDim)
             }
-            HStack {
-                Text(timestamp)
-                Spacer()
-                Text(capture.presetDefinition.name)
-                Spacer()
-                Text(capture.dimensionsText)
+
+            Button(action: onDelete) {
+                Image(systemName: "trash")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(isSelected ? Color.white.opacity(0.8) : skin.textSecondary)
+                    .frame(width: 24, height: 24)
             }
-            .font(.system(size: 10, weight: .medium, design: .monospaced))
-            .foregroundColor(isSelected ? Color.white.opacity(0.78) : skin.accentDim)
+            .buttonStyle(.borderless)
+            .help("Delete Capture")
         }
         .padding(10)
         .background(rowBackground)
         .overlay(rowOverlay)
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .onTapGesture(perform: onOpen)
     }
 
     @ViewBuilder
@@ -1075,13 +1122,68 @@ private struct CaptureRowView: View {
     }
 
     private var rowSubtitle: String {
-        let detailTitle = capture.windowTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let presetName = capture.presetDefinition.name
-        if !detailTitle.isEmpty && detailTitle != capture.sourceDisplayLabel {
-            return "\(detailTitle) · \(presetName)"
-        }
-        return "\(capture.sourceKind.displayName) · \(presetName)"
+        capture.librarySourceSummary
     }
+}
+
+private struct CaptureThumbnailView: View {
+    let capture: CaptureRecord
+    @State private var thumbnail: NSImage?
+
+    private static let cache = NSCache<NSString, NSImage>()
+
+    var body: some View {
+        Group {
+            if let thumbnail {
+                Image(nsImage: thumbnail)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(0.04))
+                    Image(systemName: "photo")
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .frame(width: 58, height: 58)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .task(id: capture.imagePath) {
+            if let cached = Self.cache.object(forKey: capture.imagePath as NSString) {
+                thumbnail = cached
+                return
+            }
+
+            let path = capture.imagePath
+            let generated = await Task.detached(priority: .utility) {
+                generateThumbnail(at: path, maxPixelSize: 116)
+            }.value
+
+            if let generated {
+                Self.cache.setObject(generated, forKey: capture.imagePath as NSString)
+            }
+            thumbnail = generated
+        }
+    }
+}
+
+private func generateThumbnail(at path: String, maxPixelSize: Int) -> NSImage? {
+    guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil) else {
+        return NSImage(contentsOfFile: path)
+    }
+
+    let options: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+    ]
+
+    if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+    }
+
+    return NSImage(contentsOfFile: path)
 }
 
 private struct WindowPickerSheet: View {

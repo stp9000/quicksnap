@@ -1096,6 +1096,25 @@ final class AnnotationDocument: ObservableObject {
         }
     }
 
+    func deleteCapture(_ capture: CaptureRecord) {
+        guard let captureRepository else { return }
+
+        do {
+            try captureRepository.deleteCapture(id: capture.id)
+
+            if selectedCaptureID == capture.id {
+                backgroundImage = nil
+                canvasSize = CGSize(width: 1280, height: 800)
+                clearAnnotations(persist: false)
+            }
+
+            refreshCaptureLibrary(preserving: captures.first(where: { $0.id != capture.id })?.id)
+            statusMessage = "Deleted \(capture.displayTitle)"
+        } catch {
+            libraryErrorMessage = "QuickSnap could not delete that capture."
+        }
+    }
+
     func saveSelectedCapturePresetPayload() {
         guard let captureRepository, let selectedCapture else { return }
         do {
@@ -1212,6 +1231,13 @@ final class AnnotationDocument: ObservableObject {
         let presetPayload = payloadAdjustedForSelectedPreset(
             from: initialPayload(for: selectedPresetID, capturedURL: capturedURL, browserMetadata: browserMetadata, pageClip: pageClip)
         )
+        let initialTags = suggestedTags(
+            presetID: selectedPresetID,
+            sourceApp: context.sourceApp,
+            title: preferredCaptureTitle(from: context, payload: presetPayload),
+            content: preferredCaptureContent(payload: presetPayload, pageClip: pageClip),
+            urlString: capturedURL
+        )
         let draft = CaptureDraft(
             id: captureID,
             displaySequence: 0,
@@ -1224,7 +1250,7 @@ final class AnnotationDocument: ObservableObject {
             sourceKind: kind,
             showsSelectionBorder: showsSelectionBorder,
             image: image,
-            tags: [],
+            tags: initialTags,
             ocrStatus: .pending,
             presetID: selectedPresetID,
             presetPayload: presetPayload
@@ -1443,6 +1469,95 @@ final class AnnotationDocument: ObservableObject {
 
     private func payloadAdjustedForSelectedPreset(from payload: CapturePresetPayload) -> CapturePresetPayload {
         payload
+    }
+
+    private func preferredCaptureTitle(from context: FrontmostCaptureContext, payload: CapturePresetPayload) -> String {
+        let candidates = [
+            payload.pageTitle,
+            context.windowTitle,
+            payload.markdownClipExcerpt,
+            payload.consoleSummary
+        ]
+
+        return candidates
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty }) ?? context.sourceApp
+    }
+
+    private func preferredCaptureContent(payload: CapturePresetPayload, pageClip: BrowserPageClipPayload?) -> String {
+        let candidates = [
+            pageClip?.excerpt ?? "",
+            payload.markdownClipExcerpt,
+            pageClip?.markdown ?? "",
+            payload.clippedMarkdownContent,
+            payload.consoleSummary,
+            payload.errorMessage
+        ]
+
+        return candidates
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty }) ?? ""
+    }
+
+    private func suggestedTags(presetID: String, sourceApp: String, title: String, content: String, urlString: String?) -> [String] {
+        var tags: [String] = []
+
+        let presetTag = CapturePresetCatalog.definition(for: presetID).name
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+        if !presetTag.isEmpty {
+            tags.append(presetTag)
+        }
+
+        if let themeTag = bestTagCandidate(from: title) {
+            tags.append(themeTag)
+        }
+
+        if let contentTag = bestContentTagCandidate(from: content, urlString: urlString, excluding: Set(tags)) {
+            tags.append(contentTag)
+        }
+
+        if tags.count < 3, let sourceTag = bestTagCandidate(from: sourceApp), !tags.contains(sourceTag) {
+            tags.append(sourceTag)
+        }
+
+        let unique = Array(NSOrderedSet(array: tags.filter { !$0.isEmpty })) as? [String] ?? tags
+        return Array(unique.prefix(3))
+    }
+
+    private func bestContentTagCandidate(from content: String, urlString: String?, excluding existing: Set<String>) -> String? {
+        if let host = urlString.flatMap(URL.init(string:))?.host(percentEncoded: false)?
+            .replacingOccurrences(of: "www.", with: "")
+            .components(separatedBy: ".")
+            .first?
+            .lowercased(),
+           !host.isEmpty,
+           !existing.contains(host) {
+            return host
+        }
+
+        return keywordCandidates(from: content).first(where: { !existing.contains($0) })
+    }
+
+    private func bestTagCandidate(from text: String) -> String? {
+        keywordCandidates(from: text).first
+    }
+
+    private func keywordCandidates(from text: String) -> [String] {
+        let stopWords: Set<String> = [
+            "the", "and", "for", "with", "that", "this", "from", "into", "your", "you", "are", "but",
+            "was", "were", "have", "has", "had", "will", "would", "should", "could", "about", "after",
+            "before", "there", "their", "them", "they", "what", "when", "where", "which", "while",
+            "article", "quick", "quicksnap", "markdown", "page", "window", "screen", "capture"
+        ]
+
+        let tokens = text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.count >= 3 && !stopWords.contains($0) && Int($0) == nil }
+
+        let ordered = Array(NSOrderedSet(array: tokens)) as? [String] ?? tokens
+        return Array(ordered[..<min(ordered.count, 6)])
     }
 
     private func initialPayload(for presetID: String, capturedURL: String?, browserMetadata: BrowserDebugMetadata?, pageClip: BrowserPageClipPayload?) -> CapturePresetPayload {
