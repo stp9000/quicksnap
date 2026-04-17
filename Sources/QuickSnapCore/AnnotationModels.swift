@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import Foundation
 import SwiftUI
 
@@ -74,6 +75,7 @@ enum SelectedAnnotation: Equatable {
 
 @MainActor
 final class AnnotationDocument: ObservableObject {
+    private static let appDefaultsDomain = "com.quicksnap.app"
     private static let annotationColorDefaultsKey = "quicksnap.annotationColorHex"
     private static let captureStoragePathDefaultsKey = "quicksnap.captureStorageRootPath"
     private static let markdownStoragePathDefaultsKey = "quicksnap.markdownStorageRootPath"
@@ -207,9 +209,12 @@ final class AnnotationDocument: ObservableObject {
     private var allCaptures: [CaptureRecord] = []
     private var pendingAutoOpenSubmissionCaptureID: String?
     private var captureRepository: CaptureRepository?
+    private let startupClock = CACurrentMediaTime()
 
     init() {
+        logStartup("init start")
         captureRepository = buildCaptureRepository()
+        logStartup("capture repository ready")
         selectedPresetID = UserDefaults.standard.string(forKey: Self.selectedPresetDefaultsKey) ?? "general"
         if UserDefaults.standard.object(forKey: Self.aiFeaturesEnabledDefaultsKey) == nil {
             aiFeaturesEnabled = true
@@ -219,8 +224,6 @@ final class AnnotationDocument: ObservableObject {
         aiUsesPersonalKey = UserDefaults.standard.bool(forKey: Self.aiUsesPersonalKeyDefaultsKey)
         autoComposeBugReports = UserDefaults.standard.bool(forKey: Self.autoComposeBugReportsDefaultsKey)
         openAIModel = UserDefaults.standard.string(forKey: Self.openAIModelDefaultsKey) ?? "gpt-4o-mini"
-        hasSavedOpenAIKey = KeychainStore.loadOpenAIKey() != nil
-        hasSavedGitHubPAT = KeychainStore.loadGitHubPAT() != nil
         githubOwner = UserDefaults.standard.string(forKey: Self.githubOwnerDefaultsKey) ?? ""
         githubRepo = UserDefaults.standard.string(forKey: Self.githubRepoDefaultsKey) ?? ""
         githubLabels = UserDefaults.standard.string(forKey: Self.githubLabelsDefaultsKey) ?? ""
@@ -228,7 +231,6 @@ final class AnnotationDocument: ObservableObject {
         jiraEmail = UserDefaults.standard.string(forKey: Self.jiraEmailDefaultsKey) ?? ""
         jiraProjectKey = UserDefaults.standard.string(forKey: Self.jiraProjectKeyDefaultsKey) ?? ""
         jiraIssueType = UserDefaults.standard.string(forKey: Self.jiraIssueTypeDefaultsKey) ?? "Bug"
-        hasSavedJiraToken = KeychainStore.loadJiraToken() != nil
 
         if let savedHex = UserDefaults.standard.string(forKey: Self.annotationColorDefaultsKey) {
             color = NSColor(hex: savedHex)
@@ -236,15 +238,32 @@ final class AnnotationDocument: ObservableObject {
 
         reloadPresetDefinitions()
         resetBugReportDraft()
+        logStartup("defaults loaded")
 
         if captureRepository == nil {
             libraryErrorMessage = "QuickSnap could not initialize its local capture library."
         }
 
-        refreshCaptureLibrary()
-        if backgroundImage == nil, let firstCapture = captures.first {
-            openCapture(firstCapture)
+        Task { @MainActor in
+            self.logStartup("deferred startup begin")
+            self.refreshCaptureLibrary()
+            self.logStartup("capture library refreshed")
+            if self.backgroundImage == nil, let firstCapture = self.captures.first {
+                self.openCapture(firstCapture)
+                self.logStartup("first capture opened")
+            }
         }
+    }
+
+    func refreshSavedCredentialState() {
+        hasSavedOpenAIKey = KeychainStore.loadOpenAIKey() != nil
+        hasSavedGitHubPAT = KeychainStore.loadGitHubPAT() != nil
+        hasSavedJiraToken = KeychainStore.loadJiraToken() != nil
+    }
+
+    private func logStartup(_ step: String) {
+        let elapsed = CACurrentMediaTime() - startupClock
+        fputs(String(format: "[QuickSnap startup] %.3fs %@\n", elapsed, step), stderr)
     }
 
     var selectedCapture: CaptureRecord? {
@@ -334,11 +353,11 @@ final class AnnotationDocument: ObservableObject {
     }
 
     var isUsingDefaultStorageLocation: Bool {
-        UserDefaults.standard.string(forKey: Self.captureStoragePathDefaultsKey) == nil
+        storedDefaultsPath(forKey: Self.captureStoragePathDefaultsKey) == nil
     }
 
     var isUsingDefaultMarkdownStorageLocation: Bool {
-        UserDefaults.standard.string(forKey: Self.markdownStoragePathDefaultsKey) == nil
+        storedDefaultsPath(forKey: Self.markdownStoragePathDefaultsKey) == nil
     }
 
     var storageLocationSummaryText: String {
@@ -1413,7 +1432,7 @@ final class AnnotationDocument: ObservableObject {
     }
 
     private func buildCaptureRepository() -> CaptureRepository? {
-        let customPath = UserDefaults.standard.string(forKey: Self.captureStoragePathDefaultsKey)
+        let customPath = storedDefaultsPath(forKey: Self.captureStoragePathDefaultsKey)
         let rootURL = customPath.map { URL(fileURLWithPath: $0, isDirectory: true) }
         return try? CaptureRepository(rootDirectory: rootURL)
     }
@@ -1501,7 +1520,7 @@ final class AnnotationDocument: ObservableObject {
     }
 
     private var markdownStorageDirectory: URL {
-        if let customPath = UserDefaults.standard.string(forKey: Self.markdownStoragePathDefaultsKey),
+        if let customPath = storedDefaultsPath(forKey: Self.markdownStoragePathDefaultsKey),
            !customPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return URL(fileURLWithPath: customPath, isDirectory: true)
         }
@@ -1513,6 +1532,26 @@ final class AnnotationDocument: ObservableObject {
         let defaultRoot = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("QuickSnap", isDirectory: true)
         return defaultRoot.appendingPathComponent("Markdown", isDirectory: true)
+    }
+
+    private func storedDefaultsPath(forKey key: String) -> String? {
+        if let directValue = UserDefaults.standard.string(forKey: key),
+           !directValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return directValue
+        }
+
+        if let appDomainValue = UserDefaults.standard.persistentDomain(forName: Self.appDefaultsDomain)?[key] as? String,
+           !appDomainValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return appDomainValue
+        }
+
+        if let appDefaults = UserDefaults(suiteName: Self.appDefaultsDomain),
+           let suiteValue = appDefaults.string(forKey: key),
+           !suiteValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return suiteValue
+        }
+
+        return nil
     }
 
     private var wikiRepository: WikiRepository {
