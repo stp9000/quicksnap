@@ -127,6 +127,8 @@ final class AnnotationDocument: ObservableObject {
     @Published var textAnnotations: [TextAnnotation] = []
     @Published private(set) var captures: [CaptureRecord] = []
     @Published private(set) var presetDefinitions: [CapturePresetDefinition] = []
+    @Published private(set) var cloudUploadedCaptureIDs: Set<String> = []
+    @Published private(set) var failedCloudUploadCaptureIDs: Set<String> = []
     @Published var selectedCaptureID: String?
     @Published var searchText = "" {
         didSet { refreshCaptureLibrary(preserving: selectedCaptureID) }
@@ -512,6 +514,12 @@ final class AnnotationDocument: ObservableObject {
     }
 
     func storageStatusText(for capture: CaptureRecord) -> String {
+        if capture.cloudUploadStatus == .failed {
+            return "Cloud upload failed"
+        }
+        if capture.cloudUploadStatus == .uploaded {
+            return "Stored in cloud"
+        }
         if isVolatileCloudOnlyCapture(capture) {
             return "Cloud-only session capture"
         }
@@ -526,9 +534,19 @@ final class AnnotationDocument: ObservableObject {
     }
 
     func isCloudHostedCapture(_ capture: CaptureRecord) -> Bool {
-        isVolatileCloudOnlyCapture(capture) ||
+        if capture.cloudUploadStatus == .uploaded {
+            return true
+        }
+        return cloudUploadedCaptureIDs.contains(capture.id) ||
             (!capture.fileExists && (cloudAssetCloudOnlyImages || cloudAssetImageOnlyPrivacy)) ||
-            (cloudAssetUploadEnabled && hasSavedCloudAssetCredentials && !cloudAssetBucket.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            canLoadCaptureFromCloud(capture)
+    }
+
+    func hasCloudUploadFailure(_ capture: CaptureRecord) -> Bool {
+        if capture.cloudUploadStatus == .failed {
+            return true
+        }
+        return failedCloudUploadCaptureIDs.contains(capture.id)
     }
 
     func refreshCaptureLibrary(preserving captureID: String? = nil) {
@@ -1248,7 +1266,10 @@ final class AnnotationDocument: ObservableObject {
                     presetPayload: existing.presetPayload,
                     annotations: existing.annotations,
                     analysis: existing.analysis,
-                    chatMessages: existing.chatMessages
+                    chatMessages: existing.chatMessages,
+                    cloudUploadStatus: existing.cloudUploadStatus,
+                    cloudObjectKey: existing.cloudObjectKey,
+                    cloudUploadError: existing.cloudUploadError
                 )
             }
             if let index = captures.firstIndex(where: { $0.id == selectedCapture.id }) {
@@ -1272,7 +1293,10 @@ final class AnnotationDocument: ObservableObject {
                     presetPayload: existing.presetPayload,
                     annotations: existing.annotations,
                     analysis: existing.analysis,
-                    chatMessages: existing.chatMessages
+                    chatMessages: existing.chatMessages,
+                    cloudUploadStatus: existing.cloudUploadStatus,
+                    cloudObjectKey: existing.cloudObjectKey,
+                    cloudUploadError: existing.cloudUploadError
                 )
             }
             selectedCaptureTagsText = normalizedTags.joined(separator: ", ")
@@ -1518,7 +1542,10 @@ final class AnnotationDocument: ObservableObject {
             presetPayload: CapturePresetPayload(),
             annotations: PersistedCaptureAnnotations(),
             analysis: CaptureAnalysisResult(),
-            chatMessages: []
+            chatMessages: [],
+            cloudUploadStatus: .none,
+            cloudObjectKey: cloudObjectKey(for: draft.id),
+            cloudUploadError: ""
         )
 
         volatileCloudOnlyCaptures.insert(record, at: 0)
@@ -1531,10 +1558,12 @@ final class AnnotationDocument: ObservableObject {
             do {
                 _ = try await CloudAssetStorageClient.uploadCaptureData(pngData, capture: record, configuration: configuration)
                 await MainActor.run {
+                    self.markCloudUploadSucceeded(for: record)
                     self.statusMessage = "Uploaded cloud-only capture"
                 }
             } catch {
                 await MainActor.run {
+                    self.markCloudUploadFailed(for: record, error: error)
                     self.statusMessage = self.cloudUploadFailureMessage(error)
                 }
             }
@@ -1563,6 +1592,7 @@ final class AnnotationDocument: ObservableObject {
             do {
                 _ = try await CloudAssetStorageClient.uploadCapture(capture, configuration: configuration)
                 await MainActor.run {
+                    self.markCloudUploadSucceeded(for: capture)
                     if removesLocalMetadataAfterUpload {
                         self.removeLocalCaptureMetadata(for: capture)
                     }
@@ -1575,10 +1605,51 @@ final class AnnotationDocument: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
+                    self.markCloudUploadFailed(for: capture, error: error)
                     self.statusMessage = self.cloudUploadFailureMessage(error)
                 }
             }
         }
+    }
+
+    private func markCloudUploadSucceeded(for capture: CaptureRecord) {
+        let objectKey = cloudObjectKey(for: capture)
+        cloudUploadedCaptureIDs.insert(capture.id)
+        failedCloudUploadCaptureIDs.remove(capture.id)
+        try? captureRepository?.updateCloudUploadState(
+            for: capture.id,
+            status: .uploaded,
+            objectKey: objectKey,
+            errorMessage: ""
+        )
+        refreshCaptureLibrary(preserving: capture.id)
+    }
+
+    private func markCloudUploadFailed(for capture: CaptureRecord, error: Error) {
+        let errorMessage = cloudUploadFailureMessage(error)
+        cloudUploadedCaptureIDs.remove(capture.id)
+        failedCloudUploadCaptureIDs.insert(capture.id)
+        try? captureRepository?.updateCloudUploadState(
+            for: capture.id,
+            status: .failed,
+            objectKey: cloudObjectKey(for: capture),
+            errorMessage: errorMessage
+        )
+        refreshCaptureLibrary(preserving: capture.id)
+    }
+
+    func cloudObjectKey(for capture: CaptureRecord) -> String {
+        if !capture.cloudObjectKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return capture.cloudObjectKey
+        }
+        return cloudObjectKey(for: capture.id)
+    }
+
+    private func cloudObjectKey(for captureID: String) -> String {
+        let prefix = cloudAssetPrefix
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/").union(.whitespacesAndNewlines))
+        let filename = "\(captureID).png"
+        return prefix.isEmpty ? filename : "\(prefix)/\(filename)"
     }
 
     private func cloudUploadFailureMessage(_ error: Error) -> String {
@@ -2290,7 +2361,10 @@ final class AnnotationDocument: ObservableObject {
             presetPayload: payload,
             annotations: capture.annotations,
             analysis: capture.analysis,
-            chatMessages: capture.chatMessages
+            chatMessages: capture.chatMessages,
+            cloudUploadStatus: capture.cloudUploadStatus,
+            cloudObjectKey: capture.cloudObjectKey,
+            cloudUploadError: capture.cloudUploadError
         )
     }
 

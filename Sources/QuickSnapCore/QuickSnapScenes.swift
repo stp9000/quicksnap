@@ -25,6 +25,12 @@ public struct QuickSnapScenes: Scene {
                 }
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(document.backgroundImage == nil)
+
+                Button("Toggle Workspace") {
+                    NotificationCenter.default.post(name: .quickSnapToggleWorkspace, object: nil)
+                }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+                .disabled(document.selectedCapture == nil)
             }
         }
 

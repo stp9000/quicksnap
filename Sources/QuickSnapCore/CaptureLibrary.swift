@@ -41,6 +41,23 @@ enum CaptureOCRStatus: String, Codable, CaseIterable {
     }
 }
 
+enum CaptureCloudUploadStatus: String, Codable, CaseIterable {
+    case none
+    case uploaded
+    case failed
+
+    var displayName: String {
+        switch self {
+        case .none:
+            return "Not uploaded"
+        case .uploaded:
+            return "Stored in cloud"
+        case .failed:
+            return "Upload failed"
+        }
+    }
+}
+
 struct CaptureRecord: Identifiable, Hashable {
     let id: String
     let displaySequence: Int
@@ -61,6 +78,9 @@ struct CaptureRecord: Identifiable, Hashable {
     let annotations: PersistedCaptureAnnotations
     let analysis: CaptureAnalysisResult
     let chatMessages: [CaptureChatMessage]
+    let cloudUploadStatus: CaptureCloudUploadStatus
+    let cloudObjectKey: String
+    let cloudUploadError: String
 
     var imageURL: URL {
         URL(fileURLWithPath: imagePath)
@@ -443,7 +463,10 @@ struct CaptureRecord: Identifiable, Hashable {
             presetPayload: presetPayload,
             annotations: annotations,
             analysis: analysis,
-            chatMessages: chatMessages
+            chatMessages: chatMessages,
+            cloudUploadStatus: cloudUploadStatus,
+            cloudObjectKey: cloudObjectKey,
+            cloudUploadError: cloudUploadError
         )
     }
 
@@ -467,7 +490,10 @@ struct CaptureRecord: Identifiable, Hashable {
             presetPayload: presetPayload,
             annotations: annotations,
             analysis: analysis,
-            chatMessages: chatMessages
+            chatMessages: chatMessages,
+            cloudUploadStatus: cloudUploadStatus,
+            cloudObjectKey: cloudObjectKey,
+            cloudUploadError: cloudUploadError
         )
     }
 
@@ -491,7 +517,10 @@ struct CaptureRecord: Identifiable, Hashable {
             presetPayload: presetPayload,
             annotations: annotations,
             analysis: analysis,
-            chatMessages: chatMessages
+            chatMessages: chatMessages,
+            cloudUploadStatus: cloudUploadStatus,
+            cloudObjectKey: cloudObjectKey,
+            cloudUploadError: cloudUploadError
         )
     }
 
@@ -732,14 +761,17 @@ final class CaptureRepository {
             presetPayload: draft.presetPayload,
             annotations: PersistedCaptureAnnotations(),
             analysis: CaptureAnalysisResult(),
-            chatMessages: []
+            chatMessages: [],
+            cloudUploadStatus: .none,
+            cloudObjectKey: "",
+            cloudUploadError: ""
         )
 
         try withDatabase { db in
             let sql = """
             INSERT OR REPLACE INTO captures
-            (id, display_sequence, image_path, created_at, source_app, window_title, url_string, ocr_text, tags, pixel_width, pixel_height, source_kind, shows_selection_border, ocr_status, preset_id, payload_json, annotations_json, analysis_status, analysis_preset_id, analysis_updated_at, analysis_summary, analysis_tags, analysis_recommended_actions, analysis_issue_title, analysis_issue_body, analysis_severity, analysis_raw_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            (id, display_sequence, image_path, created_at, source_app, window_title, url_string, ocr_text, tags, pixel_width, pixel_height, source_kind, shows_selection_border, ocr_status, preset_id, payload_json, annotations_json, analysis_status, analysis_preset_id, analysis_updated_at, analysis_summary, analysis_tags, analysis_recommended_actions, analysis_issue_title, analysis_issue_body, analysis_severity, analysis_raw_json, cloud_upload_status, cloud_object_key, cloud_upload_error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -774,6 +806,9 @@ final class CaptureRepository {
             bindText(record.analysis.issueBody, to: 25, in: statement)
             bindText(record.analysis.severity, to: 26, in: statement)
             bindText(record.analysis.rawJSON, to: 27, in: statement)
+            bindText(record.cloudUploadStatus.rawValue, to: 28, in: statement)
+            bindText(record.cloudObjectKey, to: 29, in: statement)
+            bindText(record.cloudUploadError, to: 30, in: statement)
 
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw CaptureRepositoryError.executeFailed(lastErrorMessage(db))
@@ -789,13 +824,13 @@ final class CaptureRepository {
             let sql: String
             if trimmedQuery.isEmpty {
                 sql = """
-                SELECT id, display_sequence, image_path, created_at, source_app, window_title, url_string, ocr_text, tags, pixel_width, pixel_height, source_kind, shows_selection_border, ocr_status, preset_id, payload_json, annotations_json, analysis_status, analysis_preset_id, analysis_updated_at, analysis_summary, analysis_tags, analysis_recommended_actions, analysis_issue_title, analysis_issue_body, analysis_severity, analysis_raw_json
+                SELECT id, display_sequence, image_path, created_at, source_app, window_title, url_string, ocr_text, tags, pixel_width, pixel_height, source_kind, shows_selection_border, ocr_status, preset_id, payload_json, annotations_json, analysis_status, analysis_preset_id, analysis_updated_at, analysis_summary, analysis_tags, analysis_recommended_actions, analysis_issue_title, analysis_issue_body, analysis_severity, analysis_raw_json, cloud_upload_status, cloud_object_key, cloud_upload_error
                 FROM captures
                 ORDER BY datetime(created_at) DESC;
                 """
             } else {
                 sql = """
-                SELECT id, display_sequence, image_path, created_at, source_app, window_title, url_string, ocr_text, tags, pixel_width, pixel_height, source_kind, shows_selection_border, ocr_status, preset_id, payload_json, annotations_json, analysis_status, analysis_preset_id, analysis_updated_at, analysis_summary, analysis_tags, analysis_recommended_actions, analysis_issue_title, analysis_issue_body, analysis_severity, analysis_raw_json
+                SELECT id, display_sequence, image_path, created_at, source_app, window_title, url_string, ocr_text, tags, pixel_width, pixel_height, source_kind, shows_selection_border, ocr_status, preset_id, payload_json, annotations_json, analysis_status, analysis_preset_id, analysis_updated_at, analysis_summary, analysis_tags, analysis_recommended_actions, analysis_issue_title, analysis_issue_body, analysis_severity, analysis_raw_json, cloud_upload_status, cloud_object_key, cloud_upload_error
                 FROM captures
                 WHERE lower(id) LIKE lower(?)
                    OR lower(source_app) LIKE lower(?)
@@ -859,7 +894,10 @@ final class CaptureRepository {
                             severity: stringValue(at: 25, in: statement),
                             rawJSON: stringValue(at: 26, in: statement)
                         ),
-                        chatMessages: (try? listChatMessages(for: stringValue(at: 0, in: statement))) ?? []
+                        chatMessages: (try? listChatMessages(for: stringValue(at: 0, in: statement))) ?? [],
+                        cloudUploadStatus: CaptureCloudUploadStatus(rawValue: stringValue(at: 27, in: statement)) ?? .none,
+                        cloudObjectKey: stringValue(at: 28, in: statement),
+                        cloudUploadError: stringValue(at: 29, in: statement)
                     )
                 )
             }
@@ -1013,6 +1051,26 @@ final class CaptureRepository {
         }
     }
 
+    func updateCloudUploadState(for captureID: String, status: CaptureCloudUploadStatus, objectKey: String, errorMessage: String) throws {
+        try withDatabase { db in
+            let sql = "UPDATE captures SET cloud_upload_status = ?, cloud_object_key = ?, cloud_upload_error = ? WHERE id = ?;"
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw CaptureRepositoryError.prepareFailed(lastErrorMessage(db))
+            }
+            defer { sqlite3_finalize(statement) }
+
+            bindText(status.rawValue, to: 1, in: statement)
+            bindText(objectKey, to: 2, in: statement)
+            bindText(errorMessage, to: 3, in: statement)
+            bindText(captureID, to: 4, in: statement)
+
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw CaptureRepositoryError.executeFailed(lastErrorMessage(db))
+            }
+        }
+    }
+
     func listChatMessages(for captureID: String) throws -> [CaptureChatMessage] {
         try withDatabase { db in
             let sql = """
@@ -1099,7 +1157,10 @@ final class CaptureRepository {
                 analysis_issue_title TEXT NOT NULL DEFAULT '',
                 analysis_issue_body TEXT NOT NULL DEFAULT '',
                 analysis_severity TEXT NOT NULL DEFAULT '',
-                analysis_raw_json TEXT NOT NULL DEFAULT ''
+                analysis_raw_json TEXT NOT NULL DEFAULT '',
+                cloud_upload_status TEXT NOT NULL DEFAULT 'none',
+                cloud_object_key TEXT NOT NULL DEFAULT '',
+                cloud_upload_error TEXT NOT NULL DEFAULT ''
             );
             """
             guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
@@ -1134,7 +1195,10 @@ final class CaptureRepository {
                 "ALTER TABLE captures ADD COLUMN analysis_issue_body TEXT NOT NULL DEFAULT '';",
                 "ALTER TABLE captures ADD COLUMN analysis_severity TEXT NOT NULL DEFAULT '';",
                 "ALTER TABLE captures ADD COLUMN analysis_raw_json TEXT NOT NULL DEFAULT '';",
-                "ALTER TABLE captures ADD COLUMN display_sequence INTEGER NOT NULL DEFAULT 0;"
+                "ALTER TABLE captures ADD COLUMN display_sequence INTEGER NOT NULL DEFAULT 0;",
+                "ALTER TABLE captures ADD COLUMN cloud_upload_status TEXT NOT NULL DEFAULT 'none';",
+                "ALTER TABLE captures ADD COLUMN cloud_object_key TEXT NOT NULL DEFAULT '';",
+                "ALTER TABLE captures ADD COLUMN cloud_upload_error TEXT NOT NULL DEFAULT '';"
             ]
             for statement in migrationSQL {
                 sqlite3_exec(db, statement, nil, nil, nil)
