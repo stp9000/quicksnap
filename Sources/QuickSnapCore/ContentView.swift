@@ -1,5 +1,4 @@
 import AppKit
-import ImageIO
 import SwiftUI
 
 extension Notification.Name {
@@ -11,7 +10,7 @@ private enum CenterSurfaceMode {
     case workspace
 }
 
-private enum CaptureWorkspaceTab: String, CaseIterable, Identifiable {
+enum CaptureWorkspaceTab: String, CaseIterable, Identifiable {
     case overview
     case artifacts
     case cloud
@@ -35,11 +34,17 @@ struct ContentView: View {
     @ObservedObject var document: AnnotationDocument
     @EnvironmentObject var skinManager: SkinManager
     @AppStorage("quicksnap.workspace.selectedTab") private var selectedWorkspaceTabID = CaptureWorkspaceTab.overview.rawValue
+    @AppStorage("quicksnap.sidebar.width") private var storedSidebarWidth = 292.0
     @StateObject private var colorPanel = ColorPanelCoordinator()
     @State private var inspectorShowsAllFields = false
     @State private var isHistorySidebarVisible = true
+    @State private var isResizingSidebar = false
+    @State private var sidebarWidth = 292.0
+    @State private var sidebarResizeStartWidth = 292.0
     @State private var centerSurfaceMode: CenterSurfaceMode = .editor
 
+    private let sidebarMinWidth = 240.0
+    private let sidebarMaxWidth = 430.0
     private var skin: AppSkin { skinManager.current }
     private var toolbarIconColor: Color { Color.white.opacity(skin.isGlass ? 0.82 : 0.9) }
     private var isWorkspaceSurfaceVisible: Bool { centerSurfaceMode == .workspace }
@@ -51,10 +56,16 @@ struct ContentView: View {
     }
 
     var body: some View {
-        HSplitView {
+        HStack(spacing: 0) {
             if isHistorySidebarVisible {
-                historySidebar
-                    .frame(minWidth: 240, idealWidth: 290, maxWidth: 420)
+                ZStack(alignment: .trailing) {
+                    CaptureLibrarySidebarView(document: document, skin: skin)
+                        .frame(width: sidebarWidth)
+
+                    sidebarResizeHandle
+                }
+                .frame(width: sidebarWidth)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
             }
 
             VStack(spacing: 0) {
@@ -75,8 +86,14 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(windowBackground)
         }
+        .animation(.easeInOut(duration: 0.22), value: isHistorySidebarVisible)
         .background(windowBackground)
         .background(WindowTransparencyHelper(isGlass: skin.isGlass))
+        .transaction { transaction in
+            if isResizingSidebar {
+                transaction.animation = nil
+            }
+        }
         .sheet(isPresented: $document.isWindowPickerPresented) {
             WindowPickerSheet(document: document, skin: skin)
         }
@@ -91,6 +108,46 @@ struct ContentView: View {
                 toggleWorkspaceSurface()
             }
         }
+        .onAppear {
+            sidebarWidth = min(max(storedSidebarWidth, sidebarMinWidth), sidebarMaxWidth)
+        }
+    }
+
+    private var sidebarResizeHandle: some View {
+        ZStack(alignment: .trailing) {
+            Rectangle()
+                .fill(Color.clear)
+                .frame(width: 9)
+
+            Rectangle()
+                .fill(isResizingSidebar ? skin.accent.opacity(0.55) : (skin.isModern ? skin.border.opacity(0.7) : skin.separator.opacity(0.75)))
+                .frame(width: isResizingSidebar ? 2 : 1)
+        }
+            .frame(width: 9)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.resizeLeftRight.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        if !isResizingSidebar {
+                            sidebarResizeStartWidth = sidebarWidth
+                        }
+                        isResizingSidebar = true
+                        sidebarWidth = min(max(sidebarResizeStartWidth + value.translation.width, sidebarMinWidth), sidebarMaxWidth)
+                    }
+                    .onEnded { _ in
+                        storedSidebarWidth = sidebarWidth
+                        isResizingSidebar = false
+                        NSCursor.arrow.set()
+                    }
+            )
+            .help("Resize Sidebar")
     }
 
     @ViewBuilder
@@ -99,300 +156,22 @@ struct ContentView: View {
         case .editor:
             editorSurface
         case .workspace:
-            workspaceSurface
+            CaptureWorkspaceView(
+                document: document,
+                skin: skin,
+                selectedTab: workspaceTabSelection,
+                inspectorShowsAllFields: $inspectorShowsAllFields
+            ) {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    centerSurfaceMode = .editor
+                }
+            }
         }
     }
 
     private var editorSurface: some View {
-        ZStack(alignment: .bottomLeading) {
-            canvasViewport
-                .background(canvasBackground)
-
-            quickTagEditor
-                .padding(.leading, 18)
-                .padding(.bottom, 14)
-        }
-    }
-
-    private var historySidebar: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Capture Library")
-                    .font(skin.primaryFont(size: 13))
-                    .foregroundColor(skin.accent)
-
-                TextField("Search OCR, preset, app, title, tags", text: $document.searchText)
-                    .textFieldStyle(.roundedBorder)
-
-                filterStrip
-
-                Text(document.captureCountSummary)
-                    .font(.caption)
-                    .foregroundColor(skin.textSecondary)
-
-                if let libraryErrorMessage = document.libraryErrorMessage {
-                    Text(libraryErrorMessage)
-                        .font(.caption)
-                        .foregroundColor(.red.opacity(0.9))
-                }
-            }
-            .padding(16)
-            .background(toolbarBackground)
-
-            Group {
-                if document.captures.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "photo.on.rectangle.angled")
-                            .font(.system(size: 24))
-                            .foregroundColor(skin.accentDim)
-                        Text("No captures yet")
-                            .font(skin.primaryFont(size: 13))
-                        Text(document.searchText.isEmpty ? "Take a screen capture to start building searchable history." : "Try a different search or filter to reveal more saved captures.")
-                            .font(.caption)
-                            .foregroundColor(skin.textSecondary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: 220)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(sidebarBackground)
-                } else {
-                    List(document.captures) { capture in
-                            CaptureRowView(
-                                capture: capture,
-                                isSelected: document.selectedCaptureID == capture.id,
-                                timestamp: document.timelineTimestamp(for: capture),
-                                skin: skin,
-                                thumbnailImage: document.thumbnailImage(for: capture),
-                                showsMissingImageWarning: document.shouldShowMissingImageWarning(for: capture),
-                                isCloudHosted: document.isCloudHostedCapture(capture),
-                                showsCloudUploadFailure: document.hasCloudUploadFailure(capture),
-                                onOpen: { document.openCapture(capture) },
-                                onDelete: { document.deleteCapture(capture) }
-                            )
-                        .listRowInsets(EdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10))
-                        .listRowBackground(Color.clear)
-                    }
-                    .listStyle(.sidebar)
-                    .scrollContentBackground(.hidden)
-                    .background(sidebarBackground)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .animation(nil, value: document.searchText)
-            .animation(nil, value: document.captureCountSummary)
-        }
-        .background(sidebarBackground)
-    }
-
-    private var filterStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(CaptureFilter.allCases) { filter in
-                    Button {
-                        document.activeFilter = filter
-                    } label: {
-                        Text(filter.displayName)
-                            .font(.system(size: 11, weight: .semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(filter == document.activeFilter ? skin.accentOverlay : Color.white.opacity(0.04))
-                            .foregroundColor(filter == document.activeFilter ? skin.accent : skin.textSecondary)
-                            .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
-    private var selectedCaptureInspector: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let capture = document.selectedCapture {
-                Text("Selected Capture")
-                    .font(skin.primaryFont(size: 12))
-                    .foregroundColor(skin.accent)
-
-                ForEach(displayedInspectorFields(for: capture), id: \.label) { field in
-                    if field.isLink {
-                        metadataLinkRow(label: field.label, value: field.value)
-                    } else {
-                        metadataRow(label: field.label, value: field.value)
-                    }
-                }
-
-                if shouldShowInspectorToggle(for: capture) {
-                    Button(inspectorShowsAllFields ? "Show Default Fields" : "View All Fields") {
-                        inspectorShowsAllFields.toggle()
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundColor(skin.accent)
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Tags")
-                        .font(.caption)
-                        .foregroundColor(skin.textSecondary)
-                    FlowLayout(horizontalSpacing: 6, verticalSpacing: 6) {
-                        if capture.tags.isEmpty {
-                            Text("No tags yet")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(skin.textSecondary)
-                        } else {
-                            ForEach(capture.tags, id: \.self) { tag in
-                                tagPill(tag)
-                            }
-                        }
-                    }
-                    TextField("comma, separated, tags", text: $document.selectedCaptureTagsText)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit {
-                            document.saveSelectedCaptureTags()
-                        }
-                    Button("Save Tags") {
-                        document.saveSelectedCaptureTags()
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundColor(skin.accent)
-                }
-
-                Button(capture.presetPayload.wikiIngestStatus == "complete" ? "Re-ingest to Wiki" : "Ingest to Wiki") {
-                    document.ingestSelectedCaptureToWiki()
-                }
-                .buttonStyle(.borderless)
-                .foregroundColor(skin.accent)
-
-                Button("Reveal Library in Finder") {
-                    document.revealCaptureLibraryInFinder()
-                }
-                .buttonStyle(.borderless)
-                .foregroundColor(skin.accent)
-            } else {
-                Text("Selected Capture")
-                    .font(skin.primaryFont(size: 12))
-                    .foregroundColor(skin.accent)
-                Text("Choose a stored capture to inspect metadata and tags.")
-                    .font(.caption)
-                    .foregroundColor(skin.textSecondary)
-            }
-        }
-        .padding(16)
-        .onChange(of: document.selectedCaptureID) { _ in
-            inspectorShowsAllFields = false
-        }
-    }
-
-    private func metadataRow(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption2)
-                .foregroundColor(skin.textSecondary)
-            Text(value.isEmpty ? "Unavailable" : value)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.primary)
-                .lineLimit(2)
-        }
-    }
-
-    private func metadataLinkRow(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption2)
-                .foregroundColor(skin.textSecondary)
-
-            if let url = URL(string: value), !value.isEmpty {
-                Link(value, destination: url)
-                    .font(.system(size: 11, weight: .medium))
-                    .lineLimit(2)
-            } else {
-                Text(value.isEmpty ? "Unavailable" : value)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.primary)
-                    .lineLimit(2)
-            }
-        }
-    }
-
-    private func tagPill(_ tag: String) -> some View {
-        Text(tag)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(skin.accent)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                Capsule()
-                    .fill(Color.white.opacity(skin.isGlass ? 0.1 : 0.05))
-            )
-            .overlay(
-                Capsule()
-                    .stroke(skin.accent.opacity(0.25), lineWidth: 1)
-            )
-    }
-
-    private func displayedInspectorFields(for capture: CaptureRecord) -> [InspectorField] {
-        let allFields = inspectorFields(for: capture)
-        if inspectorShowsAllFields {
-            return allFields
-        }
-        return Array(allFields.prefix(6))
-    }
-
-    private func shouldShowInspectorToggle(for capture: CaptureRecord) -> Bool {
-        inspectorFields(for: capture).count > 6
-    }
-
-    private func inspectorFields(for capture: CaptureRecord) -> [InspectorField] {
-        let baseFields: [InspectorField] = [
-            InspectorField(label: "Preset", value: capture.presetDefinition.name),
-            InspectorField(label: "Capture ID", value: capture.sourceDisplayLabel),
-            InspectorField(label: "Title", value: capture.displayTitle),
-            InspectorField(label: "Source", value: capture.displaySubtitle),
-            InspectorField(label: "URL", value: document.selectedCapturePrimaryURLText, isLink: true),
-            InspectorField(label: "Browser", value: capture.presetPayload.browser),
-            InspectorField(label: "OCR", value: capture.ocrStatus.displayName),
-            InspectorField(label: "Status", value: document.storageStatusText(for: capture))
-        ]
-
-        let detailFields: [InspectorField]
-        let wikiFields = [
-            InspectorField(label: "Wiki Ingest", value: capture.presetPayload.wikiIngestStatus),
-            InspectorField(label: "Wiki Entities", value: capture.presetPayload.wikiEntities.joined(separator: "\n")),
-            InspectorField(label: "Wiki Concepts", value: capture.presetPayload.wikiConcepts.joined(separator: "\n")),
-            InspectorField(label: "Wiki Pages", value: capture.presetPayload.wikiPagesAffected.joined(separator: "\n")),
-            InspectorField(label: "Wiki Capture Page", value: capture.presetPayload.wikiCapturePagePath),
-            InspectorField(label: "Wiki Error", value: capture.presetPayload.wikiIngestError)
-        ]
-        switch capture.normalizedPresetID {
-        case "markdown":
-            detailFields = [
-                InspectorField(label: "Page Title", value: capture.presetPayload.pageTitle),
-                InspectorField(label: "Viewport", value: capture.presetPayload.viewport),
-                InspectorField(label: "Referrer", value: capture.presetPayload.referrerURL, isLink: true),
-                InspectorField(label: "Clip Status", value: capture.presetPayload.markdownClipStatus),
-                InspectorField(label: "Extraction Engine", value: capture.presetPayload.markdownExtractionEngine),
-                InspectorField(label: "Author", value: capture.presetPayload.markdownAuthor),
-                InspectorField(label: "Published", value: capture.presetPayload.markdownPublishedDate),
-                InspectorField(label: "Extraction Error", value: capture.presetPayload.markdownExtractionError),
-                InspectorField(label: "Markdown File", value: capture.presetPayload.markdownFilePath),
-                InspectorField(label: "Excerpt", value: capture.presetPayload.markdownClipExcerpt)
-            ] + wikiFields
-        case "bug_report":
-            detailFields = [
-                InspectorField(label: "Viewport", value: capture.presetPayload.viewport),
-                InspectorField(label: "Page Title", value: capture.presetPayload.pageTitle),
-                InspectorField(label: "Referrer", value: capture.presetPayload.referrerURL, isLink: true),
-                InspectorField(label: "Console Summary", value: capture.presetPayload.consoleSummary),
-                InspectorField(label: "Error Message", value: capture.presetPayload.errorMessage),
-                InspectorField(label: "Stack Trace", value: capture.presetPayload.stackTrace),
-                InspectorField(label: "Visible Errors", value: capture.presetPayload.visibleErrors.joined(separator: "\n")),
-                InspectorField(label: "Failed Resources", value: capture.presetPayload.failedResources.joined(separator: "\n")),
-                InspectorField(label: "Script Sources", value: capture.presetPayload.scriptSources.joined(separator: "\n"))
-            ] + wikiFields
-        default:
-            detailFields = wikiFields
-        }
-
-        let fields = inspectorShowsAllFields ? baseFields + detailFields : baseFields
-        return fields.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        canvasViewport
+            .background(canvasBackground)
     }
 
     @ViewBuilder
@@ -408,17 +187,6 @@ struct ContentView: View {
     private var canvasBackground: some View {
         if skin.isGlass {
             Color.clear
-        } else {
-            skin.panelBg
-        }
-    }
-
-    @ViewBuilder
-    private var sidebarBackground: some View {
-        if skin.isGlass {
-            Rectangle().fill(.regularMaterial)
-        } else if skin.isModern {
-            skin.surface
         } else {
             skin.panelBg
         }
@@ -440,538 +208,6 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, minHeight: 420)
         .padding(32)
-    }
-
-    @ViewBuilder
-    private var quickTagEditor: some View {
-        if document.selectedCapture != nil {
-            HStack(spacing: 8) {
-                Image(systemName: "tag")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(skin.accent)
-
-                TextField("tags", text: $document.selectedCaptureTagsText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
-                    .frame(width: 220)
-                    .onSubmit {
-                        document.saveSelectedCaptureTags()
-                    }
-
-                Button {
-                    document.saveSelectedCaptureTags()
-                } label: {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(toolbarIconColor)
-                        .frame(width: 24, height: 24)
-                }
-                .buttonStyle(currentButtonStyle())
-                .help("Save Tags")
-            }
-            .padding(.leading, 10)
-            .padding(.trailing, 6)
-            .padding(.vertical, 6)
-            .background(quickTagEditorBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(skin.isModern ? skin.border : skin.separator.opacity(0.7), lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .shadow(color: Color.black.opacity(skin.isModern ? 0.18 : 0.35), radius: 10, x: 0, y: 3)
-        }
-    }
-
-    @ViewBuilder
-    private var quickTagEditorBackground: some View {
-        if skin.isGlass {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(.regularMaterial)
-        } else if skin.isModern {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(skin.surface)
-        } else {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(skin.panelBg)
-        }
-    }
-
-    private var workspaceSurface: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Text("Workspace")
-                    .font(skin.primaryFont(size: 16))
-                    .foregroundColor(skin.accent)
-
-                Spacer(minLength: 0)
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        centerSurfaceMode = .editor
-                    }
-                } label: {
-                    Image(systemName: "xmark")
-                        .foregroundColor(toolbarIconColor)
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(currentButtonStyle())
-                .help("Return to Editor")
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 14)
-            .background(toolbarBackground)
-
-            Rectangle()
-                .fill(skin.isModern ? skin.border : skin.separator)
-                .frame(height: 1)
-
-            Picker("Workspace", selection: workspaceTabSelection) {
-                ForEach(CaptureWorkspaceTab.allCases) { tab in
-                    Text(tab.title).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
-            .background(toolbarBackground)
-
-            Rectangle()
-                .fill(skin.isModern ? skin.border : skin.separator)
-                .frame(height: 1)
-
-            workspaceTabContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(canvasBackground)
-        }
-        .background(canvasBackground)
-    }
-
-    @ViewBuilder
-    private var workspaceTabContent: some View {
-        switch workspaceTabSelection.wrappedValue {
-        case .overview:
-            workspaceOverviewContent
-        case .artifacts:
-            sendPanelContent
-        case .cloud:
-            workspaceCloudContent
-        case .wiki:
-            workspaceWikiContent
-        case .ai:
-            workspaceAIContent
-        }
-    }
-
-    private var workspaceOverviewContent: some View {
-        workspacePage {
-            if let capture = document.selectedCapture {
-                workspaceCaptureSummary(capture: capture)
-
-                workspaceInfoCard {
-                    workspaceSectionTitle("Capture Details")
-                    LazyVGrid(columns: workspaceDetailColumns, alignment: .leading, spacing: 12) {
-                        ForEach(displayedInspectorFields(for: capture), id: \.label) { field in
-                            if field.isLink {
-                                metadataLinkRow(label: field.label, value: field.value)
-                            } else {
-                                metadataRow(label: field.label, value: field.value)
-                            }
-                        }
-                    }
-                }
-
-                if shouldShowInspectorToggle(for: capture) {
-                    workspacePillButton(inspectorShowsAllFields ? "Show Default Fields" : "View All Fields") {
-                        inspectorShowsAllFields.toggle()
-                    }
-                }
-
-                workspaceInfoCard {
-                    workspaceSectionTitle("Tags")
-                    FlowLayout(horizontalSpacing: 6, verticalSpacing: 6) {
-                        if capture.tags.isEmpty {
-                            Text("No tags yet")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(skin.textSecondary)
-                        } else {
-                            ForEach(capture.tags, id: \.self) { tag in
-                                tagPill(tag)
-                            }
-                        }
-                    }
-                    TextField("comma, separated, tags", text: $document.selectedCaptureTagsText)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit {
-                            document.saveSelectedCaptureTags()
-                        }
-                    FlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
-                        workspacePillButton("Save Tags") {
-                            document.saveSelectedCaptureTags()
-                        }
-                        workspacePillButton("Reveal Library") {
-                            document.revealCaptureLibraryInFinder()
-                        }
-                    }
-                }
-            } else {
-                workspaceEmptyState(
-                    symbol: "rectangle.3.group",
-                    title: "No capture selected",
-                    message: "Select a stored capture from the library to inspect details."
-                )
-            }
-        }
-    }
-
-    private var workspaceCloudContent: some View {
-        workspacePage {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Cloud Storage")
-                    .font(skin.primaryFont(size: 13))
-                    .foregroundColor(skin.accent)
-
-                if let capture = document.selectedCapture {
-                    let objectKey = document.cloudObjectKey(for: capture)
-                    workspaceInfoCard {
-                        metadataRow(label: "Status", value: document.storageStatusText(for: capture))
-                        metadataRow(label: "Object Key", value: objectKey)
-                        metadataRow(label: "Endpoint", value: document.cloudAssetEndpoint)
-                        metadataRow(label: "Bucket", value: document.cloudAssetBucket)
-                        metadataRow(label: "Prefix", value: document.cloudAssetPrefix)
-                    }
-
-                    if document.hasCloudUploadFailure(capture) {
-                        workspaceInfoCard {
-                            metadataRow(label: "Upload State", value: "Cloud upload failed")
-                            metadataRow(label: "Last Cloud Error", value: capture.cloudUploadError.isEmpty ? document.statusMessage : capture.cloudUploadError)
-                        }
-                    }
-
-                    Button("Reveal Library in Finder") {
-                        document.revealCaptureLibraryInFinder()
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundColor(skin.accent)
-
-                    Button("Copy Object Key") {
-                        copyWorkspaceText(objectKey)
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundColor(skin.accent)
-                } else {
-                    Text("Select a stored capture to inspect cloud storage details.")
-                        .font(.caption)
-                        .foregroundColor(skin.textSecondary)
-                }
-            }
-        }
-    }
-
-    private var workspaceWikiContent: some View {
-        workspacePage {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Wiki")
-                    .font(skin.primaryFont(size: 13))
-                    .foregroundColor(skin.accent)
-
-                if let capture = document.selectedCapture {
-                    workspaceInfoCard {
-                        metadataRow(label: "Ingest Status", value: capture.presetPayload.wikiIngestStatus)
-                        metadataRow(label: "Capture Page", value: capture.presetPayload.wikiCapturePagePath)
-                        metadataRow(label: "Entities", value: capture.presetPayload.wikiEntities.joined(separator: "\n"))
-                        metadataRow(label: "Concepts", value: capture.presetPayload.wikiConcepts.joined(separator: "\n"))
-                        metadataRow(label: "Pages", value: capture.presetPayload.wikiPagesAffected.joined(separator: "\n"))
-                        metadataRow(label: "Error", value: capture.presetPayload.wikiIngestError)
-                    }
-
-                    Button(capture.presetPayload.wikiIngestStatus == "complete" ? "Re-ingest to Wiki" : "Ingest to Wiki") {
-                        document.ingestSelectedCaptureToWiki()
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundColor(skin.accent)
-                } else {
-                    Text("Select a stored capture to inspect wiki status.")
-                        .font(.caption)
-                        .foregroundColor(skin.textSecondary)
-                }
-            }
-        }
-    }
-
-    private var workspaceAIContent: some View {
-        workspacePage {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("AI")
-                    .font(skin.primaryFont(size: 13))
-                    .foregroundColor(skin.accent)
-
-                if let capture = document.selectedCapture {
-                    workspaceInfoCard {
-                        metadataRow(label: "Analysis Status", value: capture.analysis.status.displayName)
-                        metadataRow(label: "Summary", value: capture.analysis.summary)
-                        metadataRow(label: "Severity", value: capture.analysis.severity)
-                        metadataRow(label: "Suggested Tags", value: capture.analysis.tags.joined(separator: ", "))
-                        metadataRow(label: "Recommended Actions", value: capture.analysis.recommendedActions.joined(separator: "\n"))
-                    }
-
-                    if let analysisErrorMessage = document.analysisErrorMessage, !analysisErrorMessage.isEmpty {
-                        workspaceInfoCard {
-                            metadataRow(label: "Analysis Error", value: analysisErrorMessage)
-                        }
-                    }
-
-                    Button("Run Analysis") {
-                        document.runAIAnalysisForSelectedCapture()
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundColor(skin.accent)
-                } else {
-                    Text("Select a stored capture to inspect analysis.")
-                        .font(.caption)
-                        .foregroundColor(skin.textSecondary)
-                }
-            }
-        }
-    }
-
-    private var workspaceDetailColumns: [GridItem] {
-        [
-            GridItem(.adaptive(minimum: 190, maximum: 320), spacing: 16, alignment: .topLeading)
-        ]
-    }
-
-    private func workspacePage<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                content()
-            }
-            .padding(18)
-            .frame(maxWidth: 920, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func workspaceInfoCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            content()
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-
-    private func copyWorkspaceText(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-
-    private func workspaceSectionTitle(_ title: String) -> some View {
-        Text(title)
-            .font(skin.primaryFont(size: 13))
-            .foregroundColor(skin.accent)
-    }
-
-    private func workspaceEmptyState(symbol: String, title: String, message: String) -> some View {
-        VStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 28))
-                .foregroundColor(skin.accentDim)
-            Text(title)
-                .font(skin.primaryFont(size: 15))
-                .foregroundColor(skin.accent)
-            Text(message)
-                .font(.caption)
-                .foregroundColor(skin.textSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
-        }
-        .frame(maxWidth: .infinity, minHeight: 300)
-        .padding(32)
-    }
-
-    private func workspaceCaptureSummary(capture: CaptureRecord) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                CaptureThumbnailView(capture: capture, fallbackImage: document.thumbnailImage(for: capture))
-                    .frame(width: 72, height: 56)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(capture.displayTitle)
-                        .font(skin.primaryFont(size: 17))
-                        .foregroundColor(.primary)
-                        .lineLimit(2)
-
-                    Text("\(document.timelineTimestamp(for: capture)) · \(capture.metadataBadgeTitle) · \(capture.dimensionsText)")
-                        .font(.caption)
-                        .foregroundColor(skin.textSecondary)
-                        .lineLimit(1)
-
-                    if let primaryURL = capture.primaryURL, !primaryURL.isEmpty, let url = URL(string: primaryURL) {
-                        Link(primaryURL, destination: url)
-                            .font(.caption)
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer(minLength: 12)
-
-                Label(document.storageStatusText(for: capture), systemImage: document.hasCloudUploadFailure(capture) ? "cloud.slash" : (document.isCloudHostedCapture(capture) ? "cloud.fill" : "internaldrive"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(document.hasCloudUploadFailure(capture) ? .orange : skin.accent)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Capsule().fill(Color.white.opacity(skin.isGlass ? 0.1 : 0.05)))
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-
-    private var sendPanelContent: some View {
-        workspacePage {
-            if document.selectedCapture == nil {
-                workspaceEmptyState(
-                    symbol: "doc.text",
-                    title: "No artifact selected",
-                    message: "Select a stored capture to preview Markdown and issue artifacts."
-                )
-            } else {
-                if let capture = document.selectedCapture {
-                    workspaceCaptureSummary(capture: capture)
-                }
-
-                workspaceInfoCard {
-                    HStack(spacing: 12) {
-                        workspaceSectionTitle("Artifact")
-
-                        Picker("Artifact", selection: $document.selectedSendPreviewKind) {
-                            Text("Markdown").tag(SendPreviewKind.markdownDocument)
-                            if document.canSendToGitHub {
-                                Text("GitHub Issue").tag(SendPreviewKind.githubIssueURL)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 180)
-
-                        Spacer(minLength: 0)
-                    }
-
-                    if document.selectedPreviewText != nil {
-                        FlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
-                            workspacePillButton("Copy") {
-                                document.copySelectedPreviewArtifact()
-                            }
-
-                            if document.selectedSendPreviewKind == .markdownDocument {
-                                workspacePillButton("Export") {
-                                    document.exportSelectedPreviewArtifactIfAvailable()
-                                }
-                            }
-
-                            if document.selectedSendPreviewKind == .githubIssueURL && document.canSendToGitHub {
-                                workspacePillButton("Review") {
-                                    document.openBugReportSubmissionSheet()
-                                }
-
-                                workspacePillButton("Copy Screenshot") {
-                                    document.copySelectedCaptureImageForGitHub()
-                                }
-
-                                workspacePillButton("Send to GitHub") {
-                                    document.openSelectedCaptureGitHubIssue()
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if let previewText = document.selectedPreviewText {
-                    workspaceInfoCard {
-                        Text(document.selectedPreviewTitle)
-                            .font(skin.primaryFont(size: 13))
-                            .foregroundColor(skin.accent)
-
-                        if document.selectedSendPreviewKind == .githubIssueURL {
-                            Text("QuickSnap will copy the current screenshot to your clipboard and open a prefilled GitHub new-issue page with the draft title, body, and labels.")
-                                .font(.caption)
-                                .foregroundColor(skin.textSecondary)
-
-                            if let lastSubmittedIssueURL = document.lastSubmittedIssueURL, !lastSubmittedIssueURL.isEmpty {
-                                metadataRow(label: "Last opened issue URL", value: lastSubmittedIssueURL)
-                            }
-
-                            if let submissionErrorMessage = document.submissionErrorMessage, !submissionErrorMessage.isEmpty {
-                                Text(submissionErrorMessage)
-                                    .font(.caption)
-                                    .foregroundColor(.red.opacity(0.9))
-                            }
-                        }
-
-                        Text(previewText)
-                            .font(.system(size: 11, weight: .medium, design: document.selectedSendPreviewKind.usesMonospace ? .monospaced : .default))
-                            .foregroundColor(.primary)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12)
-                            .background(Color.black.opacity(skin.isModern ? 0.12 : 0.2))
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    }
-                } else {
-                    Text("This workspace artifact is unavailable for the selected capture.")
-                        .font(.caption)
-                        .foregroundColor(skin.textSecondary)
-                }
-            }
-        }
-    }
-
-    private func workspacePillButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(skin.accent)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    Capsule()
-                        .fill(Color.white.opacity(skin.isGlass ? 0.1 : 0.05))
-                )
-                .overlay(
-                    Capsule()
-                        .stroke(skin.accent.opacity(0.22), lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func workspaceCaptureHeader(capture: CaptureRecord) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(capture.displayTitle)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.primary)
-            Text(document.timelineTimestamp(for: capture))
-                .font(.caption2)
-                .foregroundColor(skin.textSecondary)
-            Text(capture.metadataBadgeTitle)
-                .font(.caption)
-                .foregroundColor(skin.textSecondary)
-            if let primaryURL = capture.primaryURL, !primaryURL.isEmpty, let url = URL(string: primaryURL) {
-                Link(primaryURL, destination: url)
-                    .font(.caption)
-                    .lineLimit(1)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(skin.isGlass ? 0.08 : 0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var canvasViewport: some View {
@@ -1045,7 +281,7 @@ struct ContentView: View {
     // MARK: - Toolbar
 
     private var toolBar: some View {
-        HStack(spacing: skin.isModern ? 10 : 8) {
+        HStack(spacing: 10) {
             Button {
                 withAnimation(.easeInOut(duration: 0.18)) {
                     isHistorySidebarVisible.toggle()
@@ -1060,66 +296,84 @@ struct ContentView: View {
 
             presetPicker
 
+            themeDivider()
+
+            toolbarGroup {
+                iconButton(symbol: "macwindow.on.rectangle", helpText: "Capture Front Window") {
+                    document.presentWindowPicker()
+                }
+
+                iconButton(symbol: "selection.pin.in.out", helpText: "Capture Selection") {
+                    document.captureSelectionFromScreen()
+                }
+            }
+
+            themeDivider()
+
+            toolbarGroup {
+                ForEach(AnnotationTool.allCases) { tool in
+                    Button {
+                        document.selectedTool = tool
+                    } label: {
+                        Image(systemName: tool.symbolName)
+                            .foregroundColor(toolbarIconColor)
+                            .frame(width: skin.isModern ? 32 : 28, height: skin.isModern ? 32 : 28)
+                    }
+                    .buttonStyle(currentButtonStyle(isActive: document.selectedTool == tool))
+                    .help(tool.rawValue)
+                }
+
+                colorPickerButton
+                lineWidthMenu
+            }
+
+            themeDivider()
+
+            toolbarGroup {
+                iconButton(symbol: "arrow.uturn.backward", helpText: "Undo Last Annotation") {
+                    document.undoLastAnnotation()
+                }
+                .disabled(document.strokes.isEmpty && document.shapes.isEmpty && document.textAnnotations.isEmpty)
+
+                iconButton(symbol: "trash", helpText: "Delete Selected Annotation") {
+                    document.deleteSelectedAnnotation()
+                }
+                .disabled(document.selectedAnnotation == nil)
+
+                iconButton(symbol: "trash.slash", helpText: "Clear All Annotations") {
+                    document.clearAnnotations()
+                }
+            }
+
             Spacer(minLength: 0)
 
-            iconButton(symbol: "macwindow.on.rectangle", helpText: "Capture Front Window") {
-                document.presentWindowPicker()
-            }
+            toolbarGroup {
+                skinPicker
+                outputMenu
 
-            iconButton(symbol: "selection.pin.in.out", helpText: "Capture Selection") {
-                document.captureSelectionFromScreen()
-            }
-
-            ForEach(AnnotationTool.allCases) { tool in
                 Button {
-                    document.selectedTool = tool
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        toggleWorkspaceSurface()
+                    }
                 } label: {
-                    Image(systemName: tool.symbolName)
+                    Image(systemName: "square.grid.2x2")
                         .foregroundColor(toolbarIconColor)
                         .frame(width: skin.isModern ? 32 : 28, height: skin.isModern ? 32 : 28)
                 }
-                .buttonStyle(currentButtonStyle(isActive: document.selectedTool == tool))
-                .help(tool.rawValue)
+                .buttonStyle(currentButtonStyle(isActive: isWorkspaceSurfaceVisible))
+                .disabled(document.selectedCapture == nil)
+                .help(document.selectedCapture == nil ? "Select a capture to show Workspace" : (isWorkspaceSurfaceVisible ? "Return to Editor" : "Show Workspace"))
             }
-
-            colorPickerButton
-            lineWidthMenu
-
-            iconButton(symbol: "arrow.uturn.backward", helpText: "Undo Last Annotation") {
-                document.undoLastAnnotation()
-            }
-            .disabled(document.strokes.isEmpty && document.shapes.isEmpty && document.textAnnotations.isEmpty)
-
-            iconButton(symbol: "trash", helpText: "Delete Selected Annotation") {
-                document.deleteSelectedAnnotation()
-            }
-            .disabled(document.selectedAnnotation == nil)
-
-            iconButton(symbol: "trash.slash", helpText: "Clear All Annotations") {
-                document.clearAnnotations()
-            }
-
-            skinPicker
-            outputMenu
-
-            Spacer(minLength: 0)
-
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    toggleWorkspaceSurface()
-                }
-            } label: {
-                Image(systemName: "rectangle.3.group")
-                    .foregroundColor(toolbarIconColor)
-                    .frame(width: skin.isModern ? 32 : 28, height: skin.isModern ? 32 : 28)
-            }
-            .buttonStyle(currentButtonStyle(isActive: isWorkspaceSurfaceVisible))
-            .disabled(document.selectedCapture == nil)
-            .help(document.selectedCapture == nil ? "Select a capture to show Workspace" : (isWorkspaceSurfaceVisible ? "Return to Editor" : "Show Workspace"))
         }
-        .padding(.horizontal, skin.isModern ? 16 : 10)
-        .padding(.vertical, skin.isModern ? 12 : 8)
+        .padding(.horizontal, skin.isModern ? 14 : 10)
+        .padding(.vertical, skin.isModern ? 9 : 8)
         .background(toolbarBackground)
+    }
+
+    private func toolbarGroup<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: skin.isModern ? 6 : 5) {
+            content()
+        }
     }
 
     private func toggleWorkspaceSurface() {
@@ -1447,188 +701,7 @@ struct ContentView: View {
             alignment: .top
         )
     }
-}
 
-private struct InspectorField {
-    let label: String
-    let value: String
-    var isLink: Bool = false
-}
-
-private struct CaptureRowView: View {
-    let capture: CaptureRecord
-    let isSelected: Bool
-    let timestamp: String
-    let skin: AppSkin
-    let thumbnailImage: NSImage?
-    let showsMissingImageWarning: Bool
-    let isCloudHosted: Bool
-    let showsCloudUploadFailure: Bool
-    let onOpen: () -> Void
-    let onDelete: () -> Void
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            CaptureThumbnailView(capture: capture, fallbackImage: thumbnailImage)
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(capture.displayTitle)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(isSelected ? .white : .primary)
-                            .lineLimit(2)
-                        Text(rowSubtitle)
-                            .font(.system(size: 11))
-                            .foregroundColor(isSelected ? Color.white.opacity(0.85) : skin.textSecondary)
-                            .lineLimit(1)
-                    }
-
-                    Spacer(minLength: 8)
-
-                    if showsMissingImageWarning {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
-                    }
-                }
-
-                HStack {
-                    Text(timestamp)
-                    Spacer()
-                    Text(capture.metadataBadgeTitle)
-                    Spacer()
-                    Text(capture.dimensionsText)
-                }
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundColor(isSelected ? Color.white.opacity(0.78) : skin.accentDim)
-            }
-
-            VStack(spacing: 6) {
-                if isCloudHosted {
-                    Image(systemName: "cloud.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(isSelected ? Color.white.opacity(0.82) : skin.accent)
-                        .frame(width: 24, height: 18)
-                        .help("Stored in R2")
-                } else if showsCloudUploadFailure {
-                    Image(systemName: "cloud.slash")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.orange)
-                        .frame(width: 24, height: 18)
-                        .help("Cloud upload failed")
-                }
-
-                Button(action: onDelete) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(isSelected ? Color.white.opacity(0.8) : skin.textSecondary)
-                        .frame(width: 24, height: 24)
-                }
-                .buttonStyle(.borderless)
-                .help("Delete Capture")
-            }
-        }
-        .padding(10)
-        .background(rowBackground)
-        .overlay(rowOverlay)
-        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .onTapGesture(perform: onOpen)
-    }
-
-    @ViewBuilder
-    private var rowBackground: some View {
-        if isSelected {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(skin.accentOverlay.opacity(0.95))
-        } else if skin.isModern {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.02))
-        } else {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.black.opacity(0.12))
-        }
-    }
-
-    @ViewBuilder
-    private var rowOverlay: some View {
-        if skin.isModern {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(isSelected ? skin.accent.opacity(0.6) : skin.border, lineWidth: 1)
-        }
-    }
-
-    private var rowSubtitle: String {
-        capture.librarySourceSummary
-    }
-}
-
-private struct CaptureThumbnailView: View {
-    let capture: CaptureRecord
-    let fallbackImage: NSImage?
-    @State private var thumbnail: NSImage?
-
-    private static let cache = NSCache<NSString, NSImage>()
-
-    var body: some View {
-        Group {
-            if let thumbnail {
-                Image(nsImage: thumbnail)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white.opacity(0.04))
-                    Image(systemName: "photo")
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-        .frame(width: 58, height: 58)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .task(id: "\(capture.id)-\(capture.imagePath)") {
-            if let fallbackImage {
-                thumbnail = fallbackImage
-                return
-            }
-            guard !capture.imagePath.isEmpty else {
-                thumbnail = nil
-                return
-            }
-            if let cached = Self.cache.object(forKey: capture.imagePath as NSString) {
-                thumbnail = cached
-                return
-            }
-
-            let path = capture.imagePath
-            let generated = await Task.detached(priority: .utility) {
-                generateThumbnail(at: path, maxPixelSize: 116)
-            }.value
-
-            if let generated {
-                Self.cache.setObject(generated, forKey: capture.imagePath as NSString)
-            }
-            thumbnail = generated
-        }
-    }
-}
-
-private func generateThumbnail(at path: String, maxPixelSize: Int) -> NSImage? {
-    guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil) else {
-        return NSImage(contentsOfFile: path)
-    }
-
-    let options: [CFString: Any] = [
-        kCGImageSourceCreateThumbnailFromImageAlways: true,
-        kCGImageSourceCreateThumbnailWithTransform: true,
-        kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
-    ]
-
-    if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
-        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-    }
-
-    return NSImage(contentsOfFile: path)
 }
 
 private struct WindowPickerSheet: View {

@@ -56,6 +56,14 @@ resolve_dependency_path() {
   return 1
 }
 
+remove_code_signature() {
+  local binary="$1"
+
+  if command -v codesign >/dev/null 2>&1; then
+    codesign --remove-signature "$binary" >/dev/null 2>&1 || true
+  fi
+}
+
 bundle_binary_dependencies() {
   local source_binary="$1"
   local target_binary="$2"
@@ -83,6 +91,7 @@ bundle_binary_dependencies() {
     if [ ! -f "$bundled_dependency" ]; then
       cp "$resolved_dependency" "$bundled_dependency"
       chmod +w "$bundled_dependency"
+      remove_code_signature "$bundled_dependency"
       if [[ "$dependency_name" == *.dylib ]]; then
         install_name_tool -id "@loader_path/$dependency_name" "$bundled_dependency"
       fi
@@ -102,6 +111,7 @@ bundle_node_runtime() {
   cp "$real_node" "$runtime_directory/node"
   chmod +w "$runtime_directory/node"
   chmod +x "$runtime_directory/node"
+  remove_code_signature "$runtime_directory/node"
 
   bundle_binary_dependencies "$real_node" "$runtime_directory/node" "$runtime_directory"
 }

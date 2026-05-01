@@ -530,7 +530,7 @@ final class AnnotationDocument: ObservableObject {
     }
 
     func shouldShowMissingImageWarning(for capture: CaptureRecord) -> Bool {
-        !capture.fileExists && !canLoadCaptureFromCloud(capture)
+        !capture.fileExists && !isCloudHostedCapture(capture)
     }
 
     func isCloudHostedCapture(_ capture: CaptureRecord) -> Bool {
