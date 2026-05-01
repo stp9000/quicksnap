@@ -8,6 +8,8 @@ enum KeychainStore {
         static let openAI = "openai_api_key"
         static let githubPAT = "github_pat"
         static let jiraToken = "jira_api_token"
+        static let cloudAssetAccessKeyID = "cloud_asset_access_key_id"
+        static let cloudAssetSecretAccessKey = "cloud_asset_secret_access_key"
     }
 
     static func save(_ value: String, account: String) throws {
@@ -92,6 +94,24 @@ enum KeychainStore {
 
     static func deleteJiraToken() {
         delete(account: Account.jiraToken)
+    }
+
+    static func saveCloudAssetCredentials(accessKeyID: String, secretAccessKey: String) throws {
+        try save(accessKeyID, account: Account.cloudAssetAccessKeyID)
+        try save(secretAccessKey, account: Account.cloudAssetSecretAccessKey)
+    }
+
+    static func loadCloudAssetAccessKeyID() -> String? {
+        load(account: Account.cloudAssetAccessKeyID)
+    }
+
+    static func loadCloudAssetSecretAccessKey() -> String? {
+        load(account: Account.cloudAssetSecretAccessKey)
+    }
+
+    static func deleteCloudAssetCredentials() {
+        delete(account: Account.cloudAssetAccessKeyID)
+        delete(account: Account.cloudAssetSecretAccessKey)
     }
 }
 

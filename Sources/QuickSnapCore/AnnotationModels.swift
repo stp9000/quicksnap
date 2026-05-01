@@ -91,6 +91,13 @@ final class AnnotationDocument: ObservableObject {
     private static let jiraEmailDefaultsKey = "quicksnap.jira.email"
     private static let jiraProjectKeyDefaultsKey = "quicksnap.jira.projectKey"
     private static let jiraIssueTypeDefaultsKey = "quicksnap.jira.issueType"
+    private static let cloudAssetUploadEnabledDefaultsKey = "quicksnap.cloudAssetUpload.enabled"
+    private static let cloudAssetEndpointDefaultsKey = "quicksnap.cloudAssetUpload.endpoint"
+    private static let cloudAssetRegionDefaultsKey = "quicksnap.cloudAssetUpload.region"
+    private static let cloudAssetBucketDefaultsKey = "quicksnap.cloudAssetUpload.bucket"
+    private static let cloudAssetPrefixDefaultsKey = "quicksnap.cloudAssetUpload.prefix"
+    private static let cloudAssetCloudOnlyImagesDefaultsKey = "quicksnap.cloudAssetUpload.cloudOnlyImages"
+    private static let cloudAssetImageOnlyPrivacyDefaultsKey = "quicksnap.cloudAssetUpload.imageOnlyPrivacy"
 
     private static let timestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -202,11 +209,42 @@ final class AnnotationDocument: ObservableObject {
     }
     @Published var jiraTokenDraft = ""
     @Published private(set) var hasSavedJiraToken = false
+    @Published var cloudAssetUploadEnabled = false {
+        didSet { UserDefaults.standard.set(cloudAssetUploadEnabled, forKey: Self.cloudAssetUploadEnabledDefaultsKey) }
+    }
+    @Published var cloudAssetEndpoint = "" {
+        didSet { UserDefaults.standard.set(cloudAssetEndpoint, forKey: Self.cloudAssetEndpointDefaultsKey) }
+    }
+    @Published var cloudAssetRegion = "auto" {
+        didSet { UserDefaults.standard.set(cloudAssetRegion, forKey: Self.cloudAssetRegionDefaultsKey) }
+    }
+    @Published var cloudAssetBucket = "" {
+        didSet { UserDefaults.standard.set(cloudAssetBucket, forKey: Self.cloudAssetBucketDefaultsKey) }
+    }
+    @Published var cloudAssetPrefix = "quicksnap-captures" {
+        didSet { UserDefaults.standard.set(cloudAssetPrefix, forKey: Self.cloudAssetPrefixDefaultsKey) }
+    }
+    @Published var cloudAssetCloudOnlyImages = false {
+        didSet { UserDefaults.standard.set(cloudAssetCloudOnlyImages, forKey: Self.cloudAssetCloudOnlyImagesDefaultsKey) }
+    }
+    @Published var cloudAssetImageOnlyPrivacy = false {
+        didSet {
+            UserDefaults.standard.set(cloudAssetImageOnlyPrivacy, forKey: Self.cloudAssetImageOnlyPrivacyDefaultsKey)
+            if cloudAssetImageOnlyPrivacy {
+                cloudAssetCloudOnlyImages = true
+            }
+        }
+    }
+    @Published var cloudAssetAccessKeyIDDraft = ""
+    @Published var cloudAssetSecretAccessKeyDraft = ""
+    @Published private(set) var hasSavedCloudAssetCredentials = false
     @Published var statusMessage = "Ready"
     @Published var libraryErrorMessage: String?
 
     private var annotationHistory: [SelectedAnnotation] = []
     private var allCaptures: [CaptureRecord] = []
+    private var volatileCloudOnlyCaptures: [CaptureRecord] = []
+    private var volatileCloudOnlyImages: [String: NSImage] = [:]
     private var pendingAutoOpenSubmissionCaptureID: String?
     private var captureRepository: CaptureRepository?
     private let startupClock = CACurrentMediaTime()
@@ -231,6 +269,13 @@ final class AnnotationDocument: ObservableObject {
         jiraEmail = UserDefaults.standard.string(forKey: Self.jiraEmailDefaultsKey) ?? ""
         jiraProjectKey = UserDefaults.standard.string(forKey: Self.jiraProjectKeyDefaultsKey) ?? ""
         jiraIssueType = UserDefaults.standard.string(forKey: Self.jiraIssueTypeDefaultsKey) ?? "Bug"
+        cloudAssetUploadEnabled = UserDefaults.standard.bool(forKey: Self.cloudAssetUploadEnabledDefaultsKey)
+        cloudAssetEndpoint = UserDefaults.standard.string(forKey: Self.cloudAssetEndpointDefaultsKey) ?? ""
+        cloudAssetRegion = UserDefaults.standard.string(forKey: Self.cloudAssetRegionDefaultsKey) ?? "auto"
+        cloudAssetBucket = UserDefaults.standard.string(forKey: Self.cloudAssetBucketDefaultsKey) ?? ""
+        cloudAssetPrefix = UserDefaults.standard.string(forKey: Self.cloudAssetPrefixDefaultsKey) ?? "quicksnap-captures"
+        cloudAssetCloudOnlyImages = UserDefaults.standard.bool(forKey: Self.cloudAssetCloudOnlyImagesDefaultsKey)
+        cloudAssetImageOnlyPrivacy = UserDefaults.standard.bool(forKey: Self.cloudAssetImageOnlyPrivacyDefaultsKey)
 
         if let savedHex = UserDefaults.standard.string(forKey: Self.annotationColorDefaultsKey) {
             color = NSColor(hex: savedHex)
@@ -259,6 +304,8 @@ final class AnnotationDocument: ObservableObject {
         hasSavedOpenAIKey = KeychainStore.loadOpenAIKey() != nil
         hasSavedGitHubPAT = KeychainStore.loadGitHubPAT() != nil
         hasSavedJiraToken = KeychainStore.loadJiraToken() != nil
+        hasSavedCloudAssetCredentials = KeychainStore.loadCloudAssetAccessKeyID() != nil &&
+            KeychainStore.loadCloudAssetSecretAccessKey() != nil
     }
 
     private func logStartup(_ step: String) {
@@ -403,6 +450,37 @@ final class AnnotationDocument: ObservableObject {
         hasSavedJiraToken ? "Jira API token saved in Keychain" : "No Jira API token saved"
     }
 
+    var cloudAssetStorageSummary: String {
+        guard cloudAssetUploadEnabled else { return "Cloud capture upload is disabled" }
+        guard hasSavedCloudAssetCredentials else { return "Save S3-compatible credentials to enable upload" }
+        let bucketName = cloudAssetBucket.trimmingCharacters(in: .whitespacesAndNewlines)
+        if bucketName.isEmpty {
+            return "Choose a bucket before uploading captures"
+        }
+        if cloudAssetImageOnlyPrivacy {
+            return "Only cloud PNG assets are retained; local capture metadata is session-only"
+        }
+        return cloudAssetCloudOnlyImages ? "Uploading PNGs to \(bucketName), then removing local image files" : "Uploading capture PNGs to \(bucketName)"
+    }
+
+    private var cloudAssetStorageConfiguration: CloudAssetStorageConfiguration? {
+        guard cloudAssetUploadEnabled,
+              let accessKeyID = KeychainStore.loadCloudAssetAccessKeyID(),
+              let secretAccessKey = KeychainStore.loadCloudAssetSecretAccessKey() else {
+            return nil
+        }
+
+        return CloudAssetStorageConfiguration(
+            isEnabled: cloudAssetUploadEnabled,
+            endpointURLString: cloudAssetEndpoint,
+            region: cloudAssetRegion,
+            bucket: cloudAssetBucket,
+            keyPrefix: cloudAssetPrefix,
+            accessKeyID: accessKeyID,
+            secretAccessKey: secretAccessKey
+        )
+    }
+
     func clearAnnotations(persist: Bool = true) {
         strokes.removeAll()
         shapes.removeAll()
@@ -429,14 +507,46 @@ final class AnnotationDocument: ObservableObject {
         applyPersistedAnnotations(capture?.annotations)
     }
 
+    func thumbnailImage(for capture: CaptureRecord) -> NSImage? {
+        volatileCloudOnlyImages[capture.id]
+    }
+
+    func storageStatusText(for capture: CaptureRecord) -> String {
+        if isVolatileCloudOnlyCapture(capture) {
+            return "Cloud-only session capture"
+        }
+        if canLoadCaptureFromCloud(capture) {
+            return "Stored in cloud"
+        }
+        return capture.fileExists ? "Available locally" : "Image file missing"
+    }
+
+    func shouldShowMissingImageWarning(for capture: CaptureRecord) -> Bool {
+        !capture.fileExists && !canLoadCaptureFromCloud(capture)
+    }
+
+    func isCloudHostedCapture(_ capture: CaptureRecord) -> Bool {
+        isVolatileCloudOnlyCapture(capture) ||
+            (!capture.fileExists && (cloudAssetCloudOnlyImages || cloudAssetImageOnlyPrivacy)) ||
+            (cloudAssetUploadEnabled && hasSavedCloudAssetCredentials && !cloudAssetBucket.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
     func refreshCaptureLibrary(preserving captureID: String? = nil) {
         guard let captureRepository else {
-            captures = []
+            allCaptures = volatileCloudOnlyCaptures
+            applyCaptureFilter(preserving: captureID ?? selectedCaptureID)
             return
         }
 
         do {
-            allCaptures = try captureRepository.listCaptures(matching: searchText)
+            let storedCaptures = try captureRepository.listCaptures(matching: searchText)
+            allCaptures = (volatileCloudOnlyCaptures + storedCaptures)
+                .reduce(into: [CaptureRecord]()) { result, capture in
+                    if !result.contains(where: { $0.id == capture.id }) {
+                        result.append(capture)
+                    }
+                }
+                .sorted { $0.createdAt > $1.createdAt }
             libraryErrorMessage = nil
             applyCaptureFilter(preserving: captureID ?? selectedCaptureID)
         } catch {
@@ -453,7 +563,19 @@ final class AnnotationDocument: ObservableObject {
         chatInputText = ""
         chatErrorMessage = nil
 
-        guard capture.fileExists, let image = NSImage(contentsOf: capture.imageURL) else {
+        if let image = volatileCloudOnlyImages[capture.id] {
+            loadImage(image, capture: capture, showsSelectionBorder: capture.showsSelectionBorder)
+            statusMessage = "Loaded \(capture.displayTitle)"
+            return
+        }
+
+        if capture.fileExists, let image = NSImage(contentsOf: capture.imageURL) {
+            loadImage(image, capture: capture, showsSelectionBorder: capture.showsSelectionBorder)
+            statusMessage = "Loaded \(capture.displayTitle)"
+            return
+        }
+
+        guard canLoadCaptureFromCloud(capture), let configuration = cloudAssetStorageConfiguration else {
             backgroundImage = nil
             canvasSize = CGSize(width: 1280, height: 800)
             showsSelectionBorder = capture.showsSelectionBorder
@@ -462,8 +584,28 @@ final class AnnotationDocument: ObservableObject {
             return
         }
 
-        loadImage(image, capture: capture, showsSelectionBorder: capture.showsSelectionBorder)
-        statusMessage = "Loaded \(capture.displayTitle)"
+        statusMessage = "Loading cloud capture..."
+        Task { [capture, configuration] in
+            do {
+                let imageData = try await CloudAssetStorageClient.downloadCapture(capture, configuration: configuration)
+                guard let image = NSImage(data: imageData) else {
+                    throw CloudAssetStorageError.invalidConfiguration
+                }
+                await MainActor.run {
+                    self.volatileCloudOnlyImages[capture.id] = image
+                    self.loadImage(image, capture: capture, showsSelectionBorder: capture.showsSelectionBorder)
+                    self.statusMessage = "Loaded cloud capture"
+                }
+            } catch {
+                await MainActor.run {
+                    self.backgroundImage = nil
+                    self.canvasSize = CGSize(width: 1280, height: 800)
+                    self.showsSelectionBorder = capture.showsSelectionBorder
+                    self.clearAnnotations(persist: false)
+                    self.statusMessage = "QuickSnap could not load the cloud capture."
+                }
+            }
+        }
     }
 
     func openWorkspacePanel() {
@@ -630,6 +772,32 @@ final class AnnotationDocument: ObservableObject {
         hasSavedJiraToken = false
         jiraTokenDraft = ""
         statusMessage = "Removed Jira API token"
+    }
+
+    func saveCloudAssetCredentials() {
+        let accessKeyID = cloudAssetAccessKeyIDDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let secretAccessKey = cloudAssetSecretAccessKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !accessKeyID.isEmpty, !secretAccessKey.isEmpty else {
+            statusMessage = "Enter both cloud storage keys first."
+            return
+        }
+        do {
+            try KeychainStore.saveCloudAssetCredentials(accessKeyID: accessKeyID, secretAccessKey: secretAccessKey)
+            hasSavedCloudAssetCredentials = true
+            cloudAssetAccessKeyIDDraft = ""
+            cloudAssetSecretAccessKeyDraft = ""
+            statusMessage = "Saved cloud storage credentials"
+        } catch {
+            statusMessage = "QuickSnap could not save cloud storage credentials."
+        }
+    }
+
+    func removeCloudAssetCredentials() {
+        KeychainStore.deleteCloudAssetCredentials()
+        hasSavedCloudAssetCredentials = false
+        cloudAssetAccessKeyIDDraft = ""
+        cloudAssetSecretAccessKeyDraft = ""
+        statusMessage = "Removed cloud storage credentials"
     }
 
     func testOpenAIConnection() {
@@ -1116,6 +1284,19 @@ final class AnnotationDocument: ObservableObject {
     }
 
     func deleteCapture(_ capture: CaptureRecord) {
+        if isVolatileCloudOnlyCapture(capture) {
+            volatileCloudOnlyCaptures.removeAll { $0.id == capture.id }
+            volatileCloudOnlyImages.removeValue(forKey: capture.id)
+            if selectedCaptureID == capture.id {
+                backgroundImage = nil
+                canvasSize = CGSize(width: 1280, height: 800)
+                clearAnnotations(persist: false)
+            }
+            refreshCaptureLibrary(preserving: captures.first(where: { $0.id != capture.id })?.id)
+            statusMessage = "Removed session capture"
+            return
+        }
+
         guard let captureRepository else { return }
 
         do {
@@ -1275,6 +1456,11 @@ final class AnnotationDocument: ObservableObject {
             presetPayload: presetPayload
         )
 
+        if cloudAssetImageOnlyPrivacy {
+            ingestImageOnlyCloudCapture(from: draft, image: image, showsSelectionBorder: showsSelectionBorder)
+            return
+        }
+
         do {
             var record = try captureRepository.createCapture(from: draft)
             if record.normalizedPresetID == "markdown" {
@@ -1285,6 +1471,11 @@ final class AnnotationDocument: ObservableObject {
             refreshCaptureLibrary(preserving: record.id)
             openCapture(record)
             statusMessage = "Saved \(record.presetDefinition.name) capture"
+            uploadCaptureAssetIfNeeded(record)
+            if cloudAssetImageOnlyPrivacy {
+                volatileCloudOnlyImages[record.id] = image
+                return
+            }
             if record.normalizedPresetID == "bug_report", autoComposeBugReports, aiFeaturesEnabled {
                 pendingAutoOpenSubmissionCaptureID = record.id
                 runAIAnalysisForSelectedCapture()
@@ -1294,6 +1485,132 @@ final class AnnotationDocument: ObservableObject {
             libraryErrorMessage = "QuickSnap could not save the captured image."
             loadImage(image, capture: nil, showsSelectionBorder: showsSelectionBorder)
         }
+    }
+
+    private func ingestImageOnlyCloudCapture(from draft: CaptureDraft, image: NSImage, showsSelectionBorder: Bool) {
+        guard let configuration = cloudAssetStorageConfiguration, configuration.isUsable else {
+            libraryErrorMessage = "Cloud image-only mode needs complete cloud storage settings."
+            loadImage(image, capture: nil, showsSelectionBorder: showsSelectionBorder)
+            return
+        }
+        guard let pngData = pngData(for: image) else {
+            libraryErrorMessage = "QuickSnap could not encode the captured image."
+            loadImage(image, capture: nil, showsSelectionBorder: showsSelectionBorder)
+            return
+        }
+
+        let record = CaptureRecord(
+            id: draft.id,
+            displaySequence: nextVolatileDisplaySequence(),
+            imagePath: "",
+            createdAt: draft.createdAt,
+            sourceApp: "",
+            windowTitle: "",
+            urlString: nil,
+            ocrText: "",
+            tags: [],
+            pixelWidth: draft.pixelWidth,
+            pixelHeight: draft.pixelHeight,
+            sourceKind: draft.sourceKind,
+            showsSelectionBorder: draft.showsSelectionBorder,
+            ocrStatus: .unavailable,
+            presetID: "general",
+            presetPayload: CapturePresetPayload(),
+            annotations: PersistedCaptureAnnotations(),
+            analysis: CaptureAnalysisResult(),
+            chatMessages: []
+        )
+
+        volatileCloudOnlyCaptures.insert(record, at: 0)
+        volatileCloudOnlyImages[record.id] = image
+        refreshCaptureLibrary(preserving: record.id)
+        openCapture(record)
+        statusMessage = "Uploading cloud-only capture..."
+
+        Task { [record, pngData, configuration] in
+            do {
+                _ = try await CloudAssetStorageClient.uploadCaptureData(pngData, capture: record, configuration: configuration)
+                await MainActor.run {
+                    self.statusMessage = "Uploaded cloud-only capture"
+                }
+            } catch {
+                await MainActor.run {
+                    self.statusMessage = self.cloudUploadFailureMessage(error)
+                }
+            }
+        }
+    }
+
+    private func nextVolatileDisplaySequence() -> Int {
+        let maxExisting = (allCaptures + volatileCloudOnlyCaptures).map(\.displaySequence).max() ?? 0
+        return maxExisting + 1
+    }
+
+    private func pngData(for image: NSImage) -> Data? {
+        guard let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData) else {
+            return nil
+        }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+
+    private func uploadCaptureAssetIfNeeded(_ capture: CaptureRecord) {
+        guard let configuration = cloudAssetStorageConfiguration, configuration.isUsable else { return }
+        let removesLocalImageAfterUpload = cloudAssetCloudOnlyImages || cloudAssetImageOnlyPrivacy
+        let removesLocalMetadataAfterUpload = cloudAssetImageOnlyPrivacy
+
+        Task { [capture, configuration, removesLocalImageAfterUpload, removesLocalMetadataAfterUpload] in
+            do {
+                _ = try await CloudAssetStorageClient.uploadCapture(capture, configuration: configuration)
+                await MainActor.run {
+                    if removesLocalMetadataAfterUpload {
+                        self.removeLocalCaptureMetadata(for: capture)
+                    }
+                    if removesLocalImageAfterUpload {
+                        self.removeLocalImageFile(for: capture)
+                        self.statusMessage = removesLocalMetadataAfterUpload ? "Uploaded cloud-only capture" : "Uploaded capture asset and removed local PNG"
+                    } else {
+                        self.statusMessage = "Uploaded capture asset to cloud storage"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.statusMessage = self.cloudUploadFailureMessage(error)
+                }
+            }
+        }
+    }
+
+    private func cloudUploadFailureMessage(_ error: Error) -> String {
+        let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        if detail.isEmpty {
+            return "Cloud capture upload failed"
+        }
+        return "Cloud capture upload failed: \(detail)"
+    }
+
+    private func removeLocalImageFile(for capture: CaptureRecord) {
+        guard FileManager.default.fileExists(atPath: capture.imagePath) else { return }
+        try? FileManager.default.removeItem(atPath: capture.imagePath)
+        refreshCaptureLibrary(preserving: capture.id)
+    }
+
+    private func removeLocalCaptureMetadata(for capture: CaptureRecord) {
+        if !volatileCloudOnlyCaptures.contains(where: { $0.id == capture.id }) {
+            volatileCloudOnlyCaptures.insert(capture, at: 0)
+        }
+        try? captureRepository?.deleteCapture(id: capture.id)
+        refreshCaptureLibrary(preserving: capture.id)
+    }
+
+    private func isVolatileCloudOnlyCapture(_ capture: CaptureRecord) -> Bool {
+        volatileCloudOnlyCaptures.contains(where: { $0.id == capture.id })
+    }
+
+    private func canLoadCaptureFromCloud(_ capture: CaptureRecord) -> Bool {
+        !capture.fileExists &&
+            (isVolatileCloudOnlyCapture(capture) || cloudAssetCloudOnlyImages || cloudAssetImageOnlyPrivacy) &&
+            cloudAssetStorageConfiguration?.isUsable == true
     }
 
     private func scheduleOCR(for capture: CaptureRecord) {
@@ -2288,6 +2605,7 @@ final class AnnotationDocument: ObservableObject {
 
     private func persistAnnotationsForSelectedCapture() {
         guard let captureRepository, let selectedCaptureID else { return }
+        guard !volatileCloudOnlyCaptures.contains(where: { $0.id == selectedCaptureID }) else { return }
         do {
             try captureRepository.updateAnnotations(
                 for: selectedCaptureID,

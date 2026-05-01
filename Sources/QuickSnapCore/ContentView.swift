@@ -105,6 +105,9 @@ struct ContentView: View {
                                 isSelected: document.selectedCaptureID == capture.id,
                                 timestamp: document.timelineTimestamp(for: capture),
                                 skin: skin,
+                                thumbnailImage: document.thumbnailImage(for: capture),
+                                showsMissingImageWarning: document.shouldShowMissingImageWarning(for: capture),
+                                isCloudHosted: document.isCloudHostedCapture(capture),
                                 onOpen: { document.openCapture(capture) },
                                 onDelete: { document.deleteCapture(capture) }
                             )
@@ -298,7 +301,7 @@ struct ContentView: View {
             InspectorField(label: "URL", value: document.selectedCapturePrimaryURLText, isLink: true),
             InspectorField(label: "Browser", value: capture.presetPayload.browser),
             InspectorField(label: "OCR", value: capture.ocrStatus.displayName),
-            InspectorField(label: "Status", value: capture.fileExists ? "Available locally" : "Image file missing")
+            InspectorField(label: "Status", value: document.storageStatusText(for: capture))
         ]
 
         let detailFields: [InspectorField]
@@ -1044,12 +1047,15 @@ private struct CaptureRowView: View {
     let isSelected: Bool
     let timestamp: String
     let skin: AppSkin
+    let thumbnailImage: NSImage?
+    let showsMissingImageWarning: Bool
+    let isCloudHosted: Bool
     let onOpen: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            CaptureThumbnailView(capture: capture)
+            CaptureThumbnailView(capture: capture, fallbackImage: thumbnailImage)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
@@ -1066,7 +1072,7 @@ private struct CaptureRowView: View {
 
                     Spacer(minLength: 8)
 
-                    if !capture.fileExists {
+                    if showsMissingImageWarning {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundColor(.orange)
                     }
@@ -1083,14 +1089,24 @@ private struct CaptureRowView: View {
                 .foregroundColor(isSelected ? Color.white.opacity(0.78) : skin.accentDim)
             }
 
-            Button(action: onDelete) {
-                Image(systemName: "trash")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(isSelected ? Color.white.opacity(0.8) : skin.textSecondary)
-                    .frame(width: 24, height: 24)
+            VStack(spacing: 6) {
+                if isCloudHosted {
+                    Image(systemName: "cloud.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(isSelected ? Color.white.opacity(0.82) : skin.accent)
+                        .frame(width: 24, height: 18)
+                        .help("Stored in R2")
+                }
+
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(isSelected ? Color.white.opacity(0.8) : skin.textSecondary)
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.borderless)
+                .help("Delete Capture")
             }
-            .buttonStyle(.borderless)
-            .help("Delete Capture")
         }
         .padding(10)
         .background(rowBackground)
@@ -1128,6 +1144,7 @@ private struct CaptureRowView: View {
 
 private struct CaptureThumbnailView: View {
     let capture: CaptureRecord
+    let fallbackImage: NSImage?
     @State private var thumbnail: NSImage?
 
     private static let cache = NSCache<NSString, NSImage>()
@@ -1149,7 +1166,15 @@ private struct CaptureThumbnailView: View {
         }
         .frame(width: 58, height: 58)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .task(id: capture.imagePath) {
+        .task(id: "\(capture.id)-\(capture.imagePath)") {
+            if let fallbackImage {
+                thumbnail = fallbackImage
+                return
+            }
+            guard !capture.imagePath.isEmpty else {
+                thumbnail = nil
+                return
+            }
             if let cached = Self.cache.object(forKey: capture.imagePath as NSString) {
                 thumbnail = cached
                 return
