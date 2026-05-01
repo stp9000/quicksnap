@@ -108,8 +108,9 @@ bundle_node_runtime() {
 
 cd "$ROOT_DIR"
 
-swift scripts/generate_icon.swift
-iconutil -c icns Resources/AppIcon.iconset -o Resources/AppIcon.icns
+if [ -d Resources/AppIcon.iconset ]; then
+  iconutil -c icns Resources/AppIcon.iconset -o Resources/AppIcon.icns
+fi
 
 if [ ! -d "$HELPER_DIR" ]; then
   echo "Error: missing vendored helper directory at $HELPER_DIR" >&2
