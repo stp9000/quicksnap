@@ -9,52 +9,9 @@ DEFAULT_APP_VERSION="$(tr -d '\n' < "$VERSION_FILE")"
 APP_VERSION="${APP_VERSION:-$DEFAULT_APP_VERSION}"
 BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
 HELPER_DIR="$ROOT_DIR/Vendor/ObsidianClipperHelper"
-
-resolve_realpath() {
-  perl -MCwd=abs_path -e 'print abs_path(shift)' "$1"
-}
-
-resolve_dependency_path() {
-  local dependency="$1"
-  local source_binary="$2"
-  local real_binary
-  real_binary="$(resolve_realpath "$source_binary")"
-  local binary_directory
-  binary_directory="$(dirname "$real_binary")"
-
-  if [[ "$dependency" == @rpath/* ]]; then
-    local prefix_directory
-    prefix_directory="$(cd "$binary_directory/.." && pwd)"
-    local candidate="$prefix_directory/lib/${dependency#@rpath/}"
-    if [ -f "$candidate" ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  fi
-
-  if [[ "$dependency" == @loader_path/* ]]; then
-    local candidate="$binary_directory/${dependency#@loader_path/}"
-    if [ -f "$candidate" ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  fi
-
-  if [[ "$dependency" == @executable_path/* ]]; then
-    local candidate="$binary_directory/${dependency#@executable_path/}"
-    if [ -f "$candidate" ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  fi
-
-  if [ -f "$dependency" ]; then
-    printf '%s\n' "$dependency"
-    return 0
-  fi
-
-  return 1
-}
+NODE_VERSION="${NODE_VERSION:-v24.16.0}"
+NODE_DIST_BASE_URL="${NODE_DIST_BASE_URL:-https://nodejs.org/dist}"
+NODE_RUNTIME_CACHE_DIR="${NODE_RUNTIME_CACHE_DIR:-$ROOT_DIR/build/node-runtime}"
 
 remove_code_signature() {
   local binary="$1"
@@ -72,56 +29,69 @@ ad_hoc_sign_binary() {
   fi
 }
 
-bundle_binary_dependencies() {
-  local source_binary="$1"
-  local target_binary="$2"
-  local runtime_directory="$3"
-  local dependency
-
-  while IFS= read -r dependency; do
-    [ -z "$dependency" ] && continue
-    case "$dependency" in
-      /System/*|/usr/lib/*)
-        continue
-        ;;
-    esac
-
-    local resolved_dependency
-    if ! resolved_dependency="$(resolve_dependency_path "$dependency" "$source_binary")"; then
-      echo "Error: could not resolve runtime dependency '$dependency' for $source_binary" >&2
+node_dist_arch() {
+  case "$(uname -m)" in
+    arm64)
+      printf 'arm64\n'
+      ;;
+    x86_64)
+      printf 'x64\n'
+      ;;
+    *)
+      echo "Error: unsupported macOS architecture for bundled Node runtime: $(uname -m)" >&2
       exit 1
-    fi
-
-    local dependency_name
-    dependency_name="$(basename "$resolved_dependency")"
-    local bundled_dependency="$runtime_directory/$dependency_name"
-
-    if [ ! -f "$bundled_dependency" ]; then
-      cp "$resolved_dependency" "$bundled_dependency"
-      chmod +w "$bundled_dependency"
-      remove_code_signature "$bundled_dependency"
-      if [[ "$dependency_name" == *.dylib ]]; then
-        install_name_tool -id "@loader_path/$dependency_name" "$bundled_dependency"
-      fi
-      bundle_binary_dependencies "$resolved_dependency" "$bundled_dependency" "$runtime_directory"
-    fi
-
-    install_name_tool -change "$dependency" "@loader_path/$dependency_name" "$target_binary"
-  done < <(otool -L "$source_binary" | tail -n +2 | awk '{print $1}')
+      ;;
+  esac
 }
 
-bundle_node_runtime() {
-  local source_node="$1"
-  local runtime_directory="$2"
-  local real_node
-  real_node="$(resolve_realpath "$source_node")"
+verify_node_archive() {
+  local archive_path="$1"
+  local archive_name="$2"
+  local sums_path="$3"
+  local expected_hash
+  local actual_hash
 
-  cp "$real_node" "$runtime_directory/node"
+  expected_hash="$(awk -v file="$archive_name" '$2 == file { print $1 }' "$sums_path")"
+  if [ -z "$expected_hash" ]; then
+    echo "Error: could not find checksum for $archive_name in $sums_path" >&2
+    exit 1
+  fi
+
+  actual_hash="$(shasum -a 256 "$archive_path" | awk '{ print $1 }')"
+  if [ "$actual_hash" != "$expected_hash" ]; then
+    echo "Error: checksum mismatch for $archive_name" >&2
+    exit 1
+  fi
+}
+
+prepare_official_node_runtime() {
+  local runtime_directory="$1"
+  local arch
+  arch="$(node_dist_arch)"
+  local package_name="node-${NODE_VERSION}-darwin-${arch}"
+  local archive_name="${package_name}.tar.gz"
+  local archive_path="$NODE_RUNTIME_CACHE_DIR/$archive_name"
+  local sums_path="$NODE_RUNTIME_CACHE_DIR/SHASUMS256.txt"
+  local extracted_node="$NODE_RUNTIME_CACHE_DIR/$package_name/bin/node"
+
+  mkdir -p "$NODE_RUNTIME_CACHE_DIR"
+
+  if [ ! -f "$archive_path" ]; then
+    curl -fsSL "$NODE_DIST_BASE_URL/$NODE_VERSION/$archive_name" -o "$archive_path"
+  fi
+
+  curl -fsSL "$NODE_DIST_BASE_URL/$NODE_VERSION/SHASUMS256.txt" -o "$sums_path"
+  verify_node_archive "$archive_path" "$archive_name" "$sums_path"
+
+  if [ ! -x "$extracted_node" ]; then
+    rm -rf "$NODE_RUNTIME_CACHE_DIR/$package_name"
+    tar -xzf "$archive_path" -C "$NODE_RUNTIME_CACHE_DIR"
+  fi
+
+  cp "$extracted_node" "$runtime_directory/node"
   chmod +w "$runtime_directory/node"
   chmod +x "$runtime_directory/node"
   remove_code_signature "$runtime_directory/node"
-
-  bundle_binary_dependencies "$real_node" "$runtime_directory/node" "$runtime_directory"
 }
 
 cd "$ROOT_DIR"
@@ -157,23 +127,7 @@ if [ ! -f "$HELPER_DIR/clipper-helper.mjs" ]; then
 fi
 
 rsync -a --delete "$HELPER_DIR/" "$RESOURCES_DIR/ObsidianClipperHelper/"
-
-NODE_BINARY="${NODE_BINARY:-}"
-if [ -n "$NODE_BINARY" ]; then
-  if [ ! -x "$NODE_BINARY" ]; then
-    echo "Error: NODE_BINARY is set but not executable: $NODE_BINARY" >&2
-    exit 1
-  fi
-else
-  NODE_BINARY="$(command -v node || true)"
-fi
-
-if [ -z "$NODE_BINARY" ] || [ ! -x "$NODE_BINARY" ]; then
-  echo "Error: Node.js is required to package QuickSnap. Install Node.js or set NODE_BINARY to an executable runtime." >&2
-  exit 1
-fi
-
-bundle_node_runtime "$NODE_BINARY" "$HELPER_RUNTIME_DIR"
+prepare_official_node_runtime "$HELPER_RUNTIME_DIR"
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -209,10 +163,7 @@ PLIST
 chmod +x "$MACOS_DIR/$APP_NAME"
 
 if command -v codesign >/dev/null 2>&1; then
-  while IFS= read -r runtime_binary; do
-    ad_hoc_sign_binary "$runtime_binary"
-  done < <(find "$HELPER_RUNTIME_DIR" -maxdepth 1 -type f \( -name '*.dylib' -o -name 'node' \) | sort)
-
+  ad_hoc_sign_binary "$HELPER_RUNTIME_DIR/node"
   ad_hoc_sign_binary "$MACOS_DIR/$APP_NAME"
   codesign --force --deep --sign - "$APP_DIR"
 fi
