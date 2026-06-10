@@ -6,6 +6,25 @@ The format is based on Keep a Changelog, and QuickSnap uses semantic versions fo
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-06-10
+
+### Added
+- Added the new QuickSnap app icon and brand assets to the packaged app and README.
+- Added richer browser Markdown metadata, including canonical URL, site name, author, published date, word count, and source HTML sizing.
+- Added configurable Knowledge Wiki storage so local wiki pages can live outside a duplicated `wiki/wiki` folder layout.
+- Added wiki ingest alignment for entity/concept pages, capture evidence links, and raw clip references.
+- Added cloud asset upload support with persisted cloud status in the capture workspace.
+
+### Changed
+- Made full-page browser HTML extraction the authoritative Markdown source when available, with article clipping and OCR as fallbacks.
+- Refined the SwiftUI capture workspace layout and library cards.
+- Updated app packaging to bundle a pinned official Node LTS runtime instead of rewriting Homebrew/runtime dylib dependencies.
+- Reduced startup blocking by moving Keychain-dependent work off the initial launch path.
+
+### Fixed
+- Hardened the Obsidian-style Markdown helper output parsing and pipe handling.
+- Fixed packaged helper runtime signing so Markdown extraction works from the standard `build/QuickSnap.app` bundle.
+
 ## [0.1.5] - 2026-04-15
 
 ### Changed

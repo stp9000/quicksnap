@@ -29,10 +29,13 @@ QuickSnap will prompt for macOS permissions only when needed:
 - Search captures by OCR text, source app, title, preset, tag, and metadata.
 - Annotate captures with pen, rectangle, arrow, and text tools.
 - Use built-in presets: `General`, `Bug Report`, and `Markdown`.
-- Generate Markdown captures from supported browser pages and save `.md` files to a configurable Markdown folder.
+- Generate Markdown captures from supported browser pages using full-page HTML extraction when available.
+- Preserve browser metadata including URL, canonical URL, title, site, author, published date, description, word count, and extraction status.
 - Turn selection captures into Markdown using OCR when no page clip is available.
-- Save Markdown captures into a local `wiki/` structure and re-ingest later from the inspector.
+- Save Markdown captures into a configurable local Knowledge Wiki structure and re-ingest later from the inspector.
+- Align wiki ingest with entity/concept pages, capture evidence links, and raw clip references when available.
 - Draft GitHub issues from bug-report captures, including copy/export actions and screenshot handoff.
+- Track optional cloud asset upload status without changing the local-first storage model.
 - Reveal capture assets, Markdown files, and storage folders in Finder.
 
 ## Storage Model
@@ -42,7 +45,7 @@ QuickSnap is local-first:
 - capture images live under the configured capture storage root
 - the SQLite library lives beside the capture assets
 - generated Markdown files use a separate configurable folder
-- wiki files live under the Markdown storage root
+- Knowledge Wiki files can use their own configured folder or fall back to the Markdown storage root
 - OpenAI and GitHub tokens are stored in the macOS Keychain, not in the SQLite database
 
 See [PRIVACY.md](PRIVACY.md) for the full permissions and storage summary.
@@ -55,7 +58,7 @@ Use this path if you want to run QuickSnap from source, make local changes, or c
 
 - macOS 13+
 - Xcode command line tools (`swift`, `iconutil`)
-- Node.js for packaging the bundled Markdown helper
+- network access during packaging to fetch the pinned official Node runtime used by the bundled Markdown helper
 
 ### Run from source
 
@@ -73,6 +76,8 @@ swift build
 This creates:
 
 - `build/QuickSnap.app`
+
+The app bundle includes a pinned official Node LTS runtime for the Markdown helper. Packaging does not depend on your locally installed Node.js runtime.
 
 ## Release QuickSnap
 
