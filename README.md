@@ -1,7 +1,7 @@
 # QuickSnap
 
 <p align="center">
-  <img src="Resources/AppIcon.iconset/icon_1024x1024.png" alt="QuickSnap app icon" width="160">
+  <img src="Resources/Brand/QuickSnapAppIcon_readme.png" alt="QuickSnap app icon" width="160">
 </p>
 
 <p align="center"><strong>Local-first screenshot capture, browser-aware Markdown clipping, and knowledge capture for macOS.</strong></p>
