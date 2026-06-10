@@ -74,8 +74,9 @@ enum WikiOperationService {
             configuration: configuration
         )
 
-        let normalizedEntities = uniqueNonEmpty(extraction.entities)
-        let normalizedConcepts = uniqueNonEmpty(extraction.concepts)
+        let existingRecords = (try? repository.pageRecords()) ?? []
+        let normalizedEntities = canonicalizedTopics(uniqueNonEmpty(extraction.entities), kind: .entity, existingRecords: existingRecords)
+        let normalizedConcepts = canonicalizedTopics(uniqueNonEmpty(extraction.concepts), kind: .concept, existingRecords: existingRecords)
         let existingPages = loadExistingPages(
             entities: normalizedEntities,
             concepts: normalizedConcepts,
@@ -94,6 +95,7 @@ enum WikiOperationService {
         let capturePagePath = repository.relativePathForCapture(id: capture.id)
         let capturePageMarkdown = buildCapturePage(
             capture: capture,
+            repository: repository,
             extraction: extraction,
             entities: normalizedEntities,
             concepts: normalizedConcepts,
@@ -122,6 +124,7 @@ enum WikiOperationService {
 
     private static func buildCapturePage(
         capture: CaptureRecord,
+        repository: WikiRepository,
         extraction: WikiTopicExtraction,
         entities: [String],
         concepts: [String],
@@ -138,6 +141,7 @@ enum WikiOperationService {
             let slug = WikiRepository.slug(from: draft.title)
             return "- [\(draft.title)](../\(folder)/\(slug).md)"
         }
+        let rawClipPath = repository.relativeClipPath(for: capture)
 
         var lines: [String] = [
             "# \(title)",
@@ -154,6 +158,9 @@ enum WikiOperationService {
 
         if let primaryURL = capture.primaryURL, !primaryURL.isEmpty {
             lines.append("- URL: \(primaryURL)")
+        }
+        if let rawClipPath {
+            lines.append("- Raw Clip: [\(rawClipPath.replacingOccurrences(of: "../../clips/", with: ""))](\(rawClipPath))")
         }
         if !entities.isEmpty {
             lines.append("- Entities: \(entities.joined(separator: ", "))")
@@ -246,6 +253,22 @@ enum WikiOperationService {
         }
         return ordered
     }
+
+    private static func canonicalizedTopics(_ values: [String], kind: WikiPageKind, existingRecords: [WikiPageRecord]) -> [String] {
+        let records = existingRecords.filter { $0.kind == kind }
+        var titleBySlug: [String: String] = [:]
+        var titleByFolded: [String: String] = [:]
+        for record in records {
+            titleBySlug[WikiRepository.slug(from: record.title)] = record.title
+            titleByFolded[record.title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)] = record.title
+        }
+
+        return uniqueNonEmpty(values.map { value in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            let folded = trimmed.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            return titleByFolded[folded] ?? titleBySlug[WikiRepository.slug(from: trimmed)] ?? trimmed
+        })
+    }
 }
 
 private enum WikiOpenAIClient {
@@ -308,6 +331,9 @@ private enum WikiOpenAIClient {
         key_points (array of strings).
 
         Prefer high-signal entities and concepts only. Keep each list under 8 items.
+        Use the existing wiki conventions: no YAML frontmatter, `# Title` first, compact pages, and capture links as evidence.
+        Treat Entities and Concepts as the tagging model. Do not invent a separate tags block.
+        Prefer canonical names already present in the wiki and avoid near-duplicate aliases such as both "OCR" and "Optical Character Recognition (OCR)" unless the source truly distinguishes them.
 
         Wiki schema:
         \(schema)
@@ -365,8 +391,12 @@ private enum WikiOpenAIClient {
         - kind must be either "entity" or "concept"
         - return one page object for each requested target below
         - preserve useful existing information when a current page already exists
-        - write concise Markdown with a top-level # heading
+        - write concise Markdown with a top-level # heading and no YAML frontmatter
+        - keep entity and concept pages compact; one or two paragraphs plus a short section is enough unless the existing page is already richer
+        - merge new evidence into existing pages instead of replacing useful manual details
+        - avoid creating duplicate aliases; use the requested target title exactly
         - include links back to the capture page using `../captures/\(WikiRepository.slug(from: capture.id)).md` when helpful
+        - do not add a separate tags section; captures express tags through Entities and Concepts
 
         Wiki schema:
         \(schema)

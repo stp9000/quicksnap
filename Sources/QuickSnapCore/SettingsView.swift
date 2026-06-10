@@ -115,6 +115,29 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            settingsCard(title: "Knowledge Wiki", subtitle: document.wikiStorageSummaryText) {
+                VStack(alignment: .leading, spacing: 10) {
+                    settingsCodeBlock(document.wikiStoragePathText)
+
+                    helperText("QuickSnap writes wiki ingest pages into this root folder. Choose the folder that contains `index.md`, `log.md`, `wiki-schema.md`, and the `entities`, `concepts`, and `captures` folders.")
+
+                    HStack(spacing: 10) {
+                        settingsAction("Choose Folder...") {
+                            document.chooseWikiStorageLocation()
+                        }
+
+                        settingsAction("Reveal in Finder") {
+                            document.revealWikiStorageInFinder()
+                        }
+
+                        settingsAction("Reset to Default") {
+                            document.resetWikiStorageLocationToDefault()
+                        }
+                        .disabled(document.isUsingDefaultWikiStorageLocation)
+                    }
+                }
+            }
         }
     }
 

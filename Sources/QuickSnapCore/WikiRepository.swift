@@ -38,16 +38,22 @@ struct WikiPageRecord {
 }
 
 final class WikiRepository {
-    let markdownRootDirectory: URL
     let rootDirectory: URL
+    let clipsDirectory: URL?
 
     var schemaURL: URL { rootDirectory.appendingPathComponent("wiki-schema.md") }
     var indexURL: URL { rootDirectory.appendingPathComponent("index.md") }
     var logURL: URL { rootDirectory.appendingPathComponent("log.md") }
 
     init(markdownRootDirectory: URL) {
-        self.markdownRootDirectory = markdownRootDirectory
         self.rootDirectory = markdownRootDirectory.appendingPathComponent("wiki", isDirectory: true)
+        self.clipsDirectory = markdownRootDirectory.appendingPathComponent("clips", isDirectory: true)
+    }
+
+    init(wikiRootDirectory: URL) {
+        self.rootDirectory = wikiRootDirectory
+        let siblingClips = wikiRootDirectory.deletingLastPathComponent().appendingPathComponent("clips", isDirectory: true)
+        self.clipsDirectory = FileManager.default.fileExists(atPath: siblingClips.path) ? siblingClips : nil
     }
 
     func ensureStructure() throws {
@@ -85,6 +91,38 @@ final class WikiRepository {
 
     func relativePathForCapture(id: String) -> String {
         "captures/\(Self.slug(from: id)).md"
+    }
+
+    func relativeClipPath(for capture: CaptureRecord) -> String? {
+        guard let clipsDirectory,
+              FileManager.default.fileExists(atPath: clipsDirectory.path) else {
+            return nil
+        }
+
+        let captureDate = Self.clipDateFormatter.string(from: capture.createdAt)
+        let titleSlug = Self.slug(from: capture.displayTitle)
+        let urlSlug = capture.primaryURL
+            .flatMap(URL.init(string:))?
+            .host(percentEncoded: false)
+            .map(Self.slug(from:)) ?? ""
+
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: clipsDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        let candidates = urls.filter { url in
+            guard url.pathExtension.lowercased() == "md" else { return false }
+            let filename = url.deletingPathExtension().lastPathComponent
+            guard filename.hasPrefix(captureDate) else { return false }
+            return filename.contains(titleSlug) || (!urlSlug.isEmpty && filename.contains(urlSlug))
+        }
+
+        guard let match = candidates.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).first else {
+            return nil
+        }
+        return "../../clips/\(match.lastPathComponent)"
     }
 
     func pageURL(for relativePath: String) -> URL {
@@ -259,6 +297,14 @@ final class WikiRepository {
         return trimmed.isEmpty ? "untitled" : trimmed
     }
 
+    private static let clipDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .autoupdatingCurrent
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
     static let defaultSchema = """
 # QuickSnap Wiki Schema
 
@@ -271,6 +317,12 @@ Authoring rules:
 - Entity pages are for named tools, products, people, companies, APIs, libraries, and services.
 - Concept pages are for ideas, techniques, patterns, workflows, and comparisons.
 - Capture pages summarize one capture and list why it matters.
+- Do not use YAML frontmatter in wiki pages.
+- Use `# Title` as the first line of every page.
+- Treat capture page `Entities:` and `Concepts:` lines as the wiki tagging model.
+- Keep entity and concept pages compact unless the existing page is already more detailed.
+- Preserve manual details, useful links, and prior claims on existing entity and concept pages.
+- Link to capture pages for evidence using relative Markdown links.
 - When uncertain, be explicit about uncertainty instead of inventing claims.
 """
 }

@@ -64,6 +64,14 @@ remove_code_signature() {
   fi
 }
 
+ad_hoc_sign_binary() {
+  local binary="$1"
+
+  if command -v codesign >/dev/null 2>&1; then
+    codesign --force --sign - "$binary"
+  fi
+}
+
 bundle_binary_dependencies() {
   local source_binary="$1"
   local target_binary="$2"
@@ -201,7 +209,12 @@ PLIST
 chmod +x "$MACOS_DIR/$APP_NAME"
 
 if command -v codesign >/dev/null 2>&1; then
-  codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || true
+  while IFS= read -r runtime_binary; do
+    ad_hoc_sign_binary "$runtime_binary"
+  done < <(find "$HELPER_RUNTIME_DIR" -maxdepth 1 -type f \( -name '*.dylib' -o -name 'node' \) | sort)
+
+  ad_hoc_sign_binary "$MACOS_DIR/$APP_NAME"
+  codesign --force --deep --sign - "$APP_DIR"
 fi
 
 echo "Built app bundle: $APP_DIR"

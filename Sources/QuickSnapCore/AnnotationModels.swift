@@ -79,6 +79,7 @@ final class AnnotationDocument: ObservableObject {
     private static let annotationColorDefaultsKey = "quicksnap.annotationColorHex"
     private static let captureStoragePathDefaultsKey = "quicksnap.captureStorageRootPath"
     private static let markdownStoragePathDefaultsKey = "quicksnap.markdownStorageRootPath"
+    private static let wikiStoragePathDefaultsKey = "quicksnap.wikiStorageRootPath"
     private static let selectedPresetDefaultsKey = "quicksnap.selectedPresetID"
     private static let aiFeaturesEnabledDefaultsKey = "quicksnap.ai.enabled"
     private static let aiUsesPersonalKeyDefaultsKey = "quicksnap.ai.usesPersonalKey"
@@ -409,12 +410,20 @@ final class AnnotationDocument: ObservableObject {
         storedDefaultsPath(forKey: Self.markdownStoragePathDefaultsKey) == nil
     }
 
+    var isUsingDefaultWikiStorageLocation: Bool {
+        storedDefaultsPath(forKey: Self.wikiStoragePathDefaultsKey) == nil
+    }
+
     var storageLocationSummaryText: String {
         isUsingDefaultStorageLocation ? "Default Application Support location" : "Custom storage location"
     }
 
     var markdownStorageSummaryText: String {
         isUsingDefaultMarkdownStorageLocation ? "Default folder under capture storage" : "Custom Markdown output location"
+    }
+
+    var wikiStorageSummaryText: String {
+        isUsingDefaultWikiStorageLocation ? "Default external wiki when available" : "Custom wiki root"
     }
 
     var currentPresetDescription: String {
@@ -1184,6 +1193,13 @@ final class AnnotationDocument: ObservableObject {
         statusMessage = "Revealed Markdown storage"
     }
 
+    func revealWikiStorageInFinder() {
+        let directory = wikiRepository.rootDirectory
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        NSWorkspace.shared.activateFileViewerSelecting([directory])
+        statusMessage = "Revealed wiki storage"
+    }
+
     func ingestSelectedCaptureToWiki() {
         guard let selectedCapture else { return }
         startWikiIngest(for: selectedCapture, trigger: .manual)
@@ -1224,6 +1240,22 @@ final class AnnotationDocument: ObservableObject {
         refreshCaptureLibrary(preserving: selectedCaptureID)
     }
 
+    func chooseWikiStorageLocation() {
+        let panel = NSOpenPanel()
+        panel.prompt = "Choose"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose the wiki root folder. Pick the folder containing index.md, log.md, and wiki-schema.md."
+        panel.directoryURL = wikiRepository.rootDirectory.deletingLastPathComponent()
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        UserDefaults.standard.set(url.path, forKey: Self.wikiStoragePathDefaultsKey)
+        statusMessage = "Updated wiki storage location"
+        refreshCaptureLibrary(preserving: selectedCaptureID)
+    }
+
     func resetStorageLocationToDefault() {
         UserDefaults.standard.removeObject(forKey: Self.captureStoragePathDefaultsKey)
         reloadCaptureRepository()
@@ -1233,6 +1265,12 @@ final class AnnotationDocument: ObservableObject {
     func resetMarkdownStorageLocationToDefault() {
         UserDefaults.standard.removeObject(forKey: Self.markdownStoragePathDefaultsKey)
         statusMessage = "Reset Markdown storage to the default location"
+        refreshCaptureLibrary(preserving: selectedCaptureID)
+    }
+
+    func resetWikiStorageLocationToDefault() {
+        UserDefaults.standard.removeObject(forKey: Self.wikiStoragePathDefaultsKey)
+        statusMessage = "Reset wiki storage to the default location"
         refreshCaptureLibrary(preserving: selectedCaptureID)
     }
 
@@ -2058,7 +2096,17 @@ final class AnnotationDocument: ObservableObject {
     }
 
     private var wikiRepository: WikiRepository {
-        WikiRepository(markdownRootDirectory: markdownStorageDirectory)
+        if let customPath = storedDefaultsPath(forKey: Self.wikiStoragePathDefaultsKey),
+           !customPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return WikiRepository(wikiRootDirectory: URL(fileURLWithPath: customPath, isDirectory: true))
+        }
+
+        let externalWiki = URL(fileURLWithPath: "/Users/steve/Documents/Wiki/wiki", isDirectory: true)
+        if FileManager.default.fileExists(atPath: externalWiki.path) {
+            return WikiRepository(wikiRootDirectory: externalWiki)
+        }
+
+        return WikiRepository(markdownRootDirectory: markdownStorageDirectory)
     }
 
     private func markdownDocumentText(for capture: CaptureRecord) -> String {
@@ -2068,6 +2116,48 @@ final class AnnotationDocument: ObservableObject {
         return capture.markdownDocument
     }
 
+    private func firstNonEmpty(_ values: [String?]) -> String {
+        values
+            .map { $0?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+            .first(where: { !$0.isEmpty }) ?? ""
+    }
+
+    private func applyPageSourceMetadata(_ pageSource: BrowserPageSourcePayload?, to payload: inout CapturePresetPayload) {
+        guard let pageSource else { return }
+
+        let sourceURL = pageSource.urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !sourceURL.isEmpty {
+            payload.urlString = sourceURL
+        }
+        if payload.pageTitle.isEmpty {
+            payload.pageTitle = pageSource.pageTitle
+        }
+        if payload.canonicalURL.isEmpty {
+            payload.canonicalURL = pageSource.canonicalURL.isEmpty ? sourceURL : pageSource.canonicalURL
+        }
+        if payload.markdownClipExcerpt.isEmpty {
+            payload.markdownClipExcerpt = pageSource.metaDescription
+        }
+        if payload.markdownAuthor.isEmpty {
+            payload.markdownAuthor = pageSource.author
+        }
+        if payload.markdownPublishedDate.isEmpty {
+            payload.markdownPublishedDate = pageSource.publishedDate
+        }
+        if payload.markdownSiteName.isEmpty {
+            payload.markdownSiteName = pageSource.siteName
+        }
+        if payload.markdownWordCount == 0 {
+            payload.markdownWordCount = pageSource.wordCount
+        }
+        if pageSource.rawHTMLCharacterCount > 0 {
+            payload.sourceHTMLCharacterCount = pageSource.rawHTMLCharacterCount
+        }
+        if pageSource.filteredHTMLCharacterCount > 0 {
+            payload.filteredHTMLCharacterCount = pageSource.filteredHTMLCharacterCount
+        }
+    }
+
     private func createMarkdownPayload(for capture: CaptureRecord, context: FrontmostCaptureContext, pageClip: BrowserPageClipPayload?) -> CapturePresetPayload {
         var payload = capture.presetPayload
         if payload.browser.isEmpty, BrowserURLResolver.isSupportedBrowserApp(capture.sourceApp) {
@@ -2075,16 +2165,20 @@ final class AnnotationDocument: ObservableObject {
         }
 
         let pageSource = BrowserPageSourceResolver.resolve(for: context)
+        applyPageSourceMetadata(pageSource, to: &payload)
         let liveHTML = pageSource?.html.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let clippedMarkdown = pageClip?.markdown.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let helperResult: MarkdownHelperExtractionResult?
-        let helperURL = pageSource?.urlString.isEmpty == false ? pageSource?.urlString ?? "" : (capture.primaryURL ?? "")
-        let shouldAttemptHelper = !helperURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (!liveHTML.isEmpty || clippedMarkdown.isEmpty)
+        let helperURL = firstNonEmpty([pageSource?.urlString, payload.urlString, payload.primaryURL, capture.primaryURL])
+        if payload.urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !helperURL.isEmpty {
+            payload.urlString = helperURL
+        }
+        let shouldAttemptHelper = !helperURL.isEmpty
         if shouldAttemptHelper {
             do {
                 helperResult = try ObsidianClipperHelper.extract(
                     urlString: helperURL,
-                    pageTitle: (pageSource?.pageTitle.isEmpty == false ? pageSource?.pageTitle : payload.pageTitle) ?? payload.pageTitle,
+                    pageTitle: firstNonEmpty([pageSource?.pageTitle, payload.pageTitle, capture.displayTitle]),
                     html: liveHTML.isEmpty ? nil : liveHTML
                 )
             } catch {
@@ -2110,20 +2204,32 @@ final class AnnotationDocument: ObservableObject {
             payload.markdownClipStatus = MarkdownClipStatus.complete.rawValue
             payload.markdownExtractionEngine = helperResult.engine
             payload.markdownExtractionError = ""
-            if payload.pageTitle.isEmpty {
-                payload.pageTitle = helperResult.title.isEmpty ? capture.displayTitle : helperResult.title
+            if !helperResult.title.isEmpty {
+                payload.pageTitle = helperResult.title
+            } else if payload.pageTitle.isEmpty {
+                payload.pageTitle = pageSource?.pageTitle.isEmpty == false ? pageSource?.pageTitle ?? capture.displayTitle : capture.displayTitle
             }
-            if payload.canonicalURL.isEmpty {
-                payload.canonicalURL = helperResult.canonicalURL.isEmpty ? (pageSource?.urlString.isEmpty == false ? pageSource?.urlString ?? payload.urlString : payload.urlString) : helperResult.canonicalURL
+            if !helperResult.canonicalURL.isEmpty {
+                payload.canonicalURL = helperResult.canonicalURL
+            } else if payload.canonicalURL.isEmpty {
+                payload.canonicalURL = firstNonEmpty([pageSource?.canonicalURL, pageSource?.urlString, payload.urlString])
             }
-            if payload.markdownClipExcerpt.isEmpty {
-                payload.markdownClipExcerpt = helperResult.excerpt.isEmpty ? firstMeaningfulExcerpt(from: helperResult.markdown) : helperResult.excerpt
+            if !helperResult.excerpt.isEmpty {
+                payload.markdownClipExcerpt = helperResult.excerpt
+            } else if payload.markdownClipExcerpt.isEmpty {
+                payload.markdownClipExcerpt = firstMeaningfulExcerpt(from: helperResult.markdown)
             }
-            if payload.markdownAuthor.isEmpty {
+            if !helperResult.author.isEmpty {
                 payload.markdownAuthor = helperResult.author
             }
-            if payload.markdownPublishedDate.isEmpty {
+            if !helperResult.published.isEmpty {
                 payload.markdownPublishedDate = helperResult.published
+            }
+            if !helperResult.site.isEmpty {
+                payload.markdownSiteName = helperResult.site
+            }
+            if helperResult.wordCount > 0 {
+                payload.markdownWordCount = helperResult.wordCount
             }
         } else {
             let domMarkdown = clippedMarkdown.isEmpty ? payload.clippedMarkdownContent.trimmingCharacters(in: .whitespacesAndNewlines) : clippedMarkdown
@@ -2136,7 +2242,7 @@ final class AnnotationDocument: ObservableObject {
             if !domMarkdown.isEmpty {
                 payload.clippedMarkdownContent = domMarkdown
                 payload.markdownClipStatus = MarkdownClipStatus.fallback.rawValue
-                payload.markdownExtractionEngine = "quicksnap_dom_fallback"
+                payload.markdownExtractionEngine = "browser_page_clipper_fallback"
             } else {
                 payload.clippedMarkdownContent = fallbackMarkdownBody(for: capture, pageClip: pageClip)
                 payload.markdownClipStatus = MarkdownClipStatus.fallback.rawValue
@@ -2149,6 +2255,12 @@ final class AnnotationDocument: ObservableObject {
         }
         if payload.canonicalURL.isEmpty {
             payload.canonicalURL = pageClip?.canonicalURL ?? payload.urlString
+        }
+        if payload.markdownAuthor.isEmpty {
+            payload.markdownAuthor = pageClip?.byline ?? ""
+        }
+        if payload.markdownPublishedDate.isEmpty {
+            payload.markdownPublishedDate = pageClip?.publishDate ?? ""
         }
         if payload.markdownClipExcerpt.isEmpty {
             payload.markdownClipExcerpt = pageClip?.excerpt ?? firstMeaningfulExcerpt(from: payload.clippedMarkdownContent)
@@ -2204,7 +2316,10 @@ final class AnnotationDocument: ObservableObject {
     }
 
     private func aiEnhancedMarkdownPayload(for capture: CaptureRecord, recognizedText: String, configuration: OpenAIAnalysisConfiguration) async throws -> CapturePresetPayload {
-        guard capture.presetPayload.markdownExtractionEngine != "obsidian_clipper_helper" else {
+        let existingMarkdown = capture.presetPayload.clippedMarkdownContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let extractionEngine = capture.presetPayload.markdownExtractionEngine
+        let hasStructuredBrowserFallback = extractionEngine == "browser_page_clipper_fallback" && !isPlaceholderMarkdownBody(existingMarkdown)
+        guard extractionEngine != "obsidian_clipper_helper", !hasStructuredBrowserFallback else {
             return capture.presetPayload
         }
 
@@ -2770,9 +2885,7 @@ private func enrichedPayload(for capture: CaptureRecord, recognizedText: String)
         let markdownFromOCR = markdownBodyFromRecognizedText(recognized)
         let shouldPromoteOCR = !markdownFromOCR.isEmpty && (
             existing.isEmpty ||
-            existing == "No structured page text was available from this capture." ||
-            existing == "QuickSnap is waiting for OCR so this selection can be turned into Markdown." ||
-            capture.sourceKind == .selection
+            isPlaceholderMarkdownBody(existing)
         )
         if shouldPromoteOCR {
             payload.clippedMarkdownContent = markdownFromOCR
@@ -2787,6 +2900,12 @@ private func enrichedPayload(for capture: CaptureRecord, recognizedText: String)
     }
 
     return didChange ? payload : nil
+}
+
+private func isPlaceholderMarkdownBody(_ text: String) -> Bool {
+    let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return normalized == "No structured page text was available from this capture." ||
+        normalized == "QuickSnap is waiting for OCR so this selection can be turned into Markdown."
 }
 
 private func markdownBodyFromRecognizedText(_ text: String) -> String {

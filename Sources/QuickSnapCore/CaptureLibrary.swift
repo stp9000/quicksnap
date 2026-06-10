@@ -562,6 +562,10 @@ struct CaptureRecord: Identifiable, Hashable {
         let clipStatus = presetPayload.markdownClipStatus.trimmingCharacters(in: .whitespacesAndNewlines)
         let extractionEngine = presetPayload.markdownExtractionEngine.trimmingCharacters(in: .whitespacesAndNewlines)
         let extractionError = presetPayload.markdownExtractionError.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceURL = presetPayload.urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let canonicalURL = presetPayload.canonicalURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let documentSourceURL = sourceURL.isEmpty ? primaryURL : sourceURL
+        let documentSourceURLText = documentSourceURL ?? ""
 
         let frontmatter: [String?] = [
             "---",
@@ -569,11 +573,17 @@ struct CaptureRecord: Identifiable, Hashable {
             "capture_id: \"\(id)\"",
             "preset: \"\(presetDefinition.name)\"",
             "captured_at: \"\(Self.markdownTimestampFormatter.string(from: createdAt))\"",
-            primaryURL.map { "source_url: \"\(yamlEscaped($0))\"" },
+            documentSourceURL.map { "source_url: \"\(yamlEscaped($0))\"" },
+            !canonicalURL.isEmpty && canonicalURL != documentSourceURLText ? "canonical_url: \"\(yamlEscaped(canonicalURL))\"" : nil,
             clipStatus.isEmpty ? nil : "clip_status: \"\(yamlEscaped(clipStatus))\"",
             extractionEngine.isEmpty ? nil : "extraction_engine: \"\(yamlEscaped(extractionEngine))\"",
+            presetPayload.markdownSiteName.isEmpty ? nil : "site: \"\(yamlEscaped(presetPayload.markdownSiteName))\"",
             presetPayload.markdownAuthor.isEmpty ? nil : "author: \"\(yamlEscaped(presetPayload.markdownAuthor))\"",
             presetPayload.markdownPublishedDate.isEmpty ? nil : "published: \"\(yamlEscaped(presetPayload.markdownPublishedDate))\"",
+            presetPayload.markdownClipExcerpt.isEmpty ? nil : "description: \"\(yamlEscaped(presetPayload.markdownClipExcerpt))\"",
+            presetPayload.markdownWordCount > 0 ? "word_count: \(presetPayload.markdownWordCount)" : nil,
+            presetPayload.sourceHTMLCharacterCount > 0 ? "source_html_characters: \(presetPayload.sourceHTMLCharacterCount)" : nil,
+            presetPayload.filteredHTMLCharacterCount > 0 ? "filtered_html_characters: \(presetPayload.filteredHTMLCharacterCount)" : nil,
             "screenshot_path: \"\(yamlEscaped(imagePath))\"",
             !tags.isEmpty ? "tags: [\(tags.map { "\"\(yamlEscaped($0))\"" }.joined(separator: ", "))]" : nil,
             "---"
@@ -583,8 +593,8 @@ struct CaptureRecord: Identifiable, Hashable {
         lines.append("")
         lines.append("# \(title.isEmpty ? displayTitle : title)")
         lines.append("")
-        if let primaryURL {
-            lines.append("Source: [\(primaryURL)](\(primaryURL))")
+        if let documentSourceURL {
+            lines.append("Source: [\(documentSourceURL)](\(documentSourceURL))")
             lines.append("")
         }
         if !body.isEmpty {
@@ -606,6 +616,24 @@ struct CaptureRecord: Identifiable, Hashable {
         lines.append("- Source: \(displaySubtitle)")
         lines.append("- Dimensions: \(dimensionsText)")
         lines.append("- OCR Status: \(ocrStatus.displayName)")
+        if let documentSourceURL {
+            lines.append("- Page URL: \(documentSourceURL)")
+        }
+        if !canonicalURL.isEmpty && canonicalURL != documentSourceURLText {
+            lines.append("- Canonical URL: \(canonicalURL)")
+        }
+        if !presetPayload.markdownSiteName.isEmpty {
+            lines.append("- Site: \(presetPayload.markdownSiteName)")
+        }
+        if presetPayload.markdownWordCount > 0 {
+            lines.append("- Word Count: \(presetPayload.markdownWordCount)")
+        }
+        if presetPayload.sourceHTMLCharacterCount > 0 {
+            lines.append("- Source HTML Characters: \(presetPayload.sourceHTMLCharacterCount)")
+        }
+        if presetPayload.filteredHTMLCharacterCount > 0 {
+            lines.append("- Filtered HTML Characters: \(presetPayload.filteredHTMLCharacterCount)")
+        }
         if !extractionEngine.isEmpty {
             lines.append("- Extraction Engine: \(extractionEngine)")
         }

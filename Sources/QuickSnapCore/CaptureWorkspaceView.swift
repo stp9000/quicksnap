@@ -497,12 +497,18 @@ struct CaptureWorkspaceView: View {
         case "markdown":
             detailFields = [
                 InspectorField(label: "Page Title", value: capture.presetPayload.pageTitle),
+                InspectorField(label: "Page URL", value: capture.presetPayload.urlString, isLink: true),
+                InspectorField(label: "Canonical URL", value: capture.presetPayload.canonicalURL, isLink: true),
                 InspectorField(label: "Viewport", value: capture.presetPayload.viewport),
                 InspectorField(label: "Referrer", value: capture.presetPayload.referrerURL, isLink: true),
                 InspectorField(label: "Clip Status", value: capture.presetPayload.markdownClipStatus),
                 InspectorField(label: "Extraction Engine", value: capture.presetPayload.markdownExtractionEngine),
+                InspectorField(label: "Site", value: capture.presetPayload.markdownSiteName),
                 InspectorField(label: "Author", value: capture.presetPayload.markdownAuthor),
                 InspectorField(label: "Published", value: capture.presetPayload.markdownPublishedDate),
+                InspectorField(label: "Word Count", value: capture.presetPayload.markdownWordCount > 0 ? "\(capture.presetPayload.markdownWordCount)" : ""),
+                InspectorField(label: "Source HTML", value: capture.presetPayload.sourceHTMLCharacterCount > 0 ? "\(capture.presetPayload.sourceHTMLCharacterCount) characters" : ""),
+                InspectorField(label: "Filtered HTML", value: capture.presetPayload.filteredHTMLCharacterCount > 0 ? "\(capture.presetPayload.filteredHTMLCharacterCount) characters" : ""),
                 InspectorField(label: "Extraction Error", value: capture.presetPayload.markdownExtractionError),
                 InspectorField(label: "Markdown File", value: capture.presetPayload.markdownFilePath),
                 InspectorField(label: "Excerpt", value: capture.presetPayload.markdownClipExcerpt)

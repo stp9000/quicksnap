@@ -51,6 +51,37 @@ async function resolvedHTML(input) {
   return await response.text();
 }
 
+function withSuppressedOutput(callback) {
+  const originalConsole = {
+    debug: console.debug,
+    error: console.error,
+    info: console.info,
+    log: console.log,
+    warn: console.warn
+  };
+  const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+  const originalStderrWrite = process.stderr.write.bind(process.stderr);
+
+  try {
+    console.debug = () => {};
+    console.error = () => {};
+    console.info = () => {};
+    console.log = () => {};
+    console.warn = () => {};
+    process.stdout.write = () => true;
+    process.stderr.write = () => true;
+    return callback();
+  } finally {
+    console.debug = originalConsole.debug;
+    console.error = originalConsole.error;
+    console.info = originalConsole.info;
+    console.log = originalConsole.log;
+    console.warn = originalConsole.warn;
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+  }
+}
+
 function convertToMarkdown(html, url) {
   const markdownFactory = DefuddleFull?.createMarkdownContent;
   const fallbackTurndown = new TurndownService({
@@ -62,20 +93,13 @@ function convertToMarkdown(html, url) {
     return fallbackTurndown.turndown(html || "").trim();
   }
 
-  const originalError = console.error;
-  const originalStderrWrite = process.stderr.write.bind(process.stderr);
   try {
-    console.error = () => {};
-    process.stderr.write = () => true;
-    const markdown = String(markdownFactory(html || "", url || "") || "").trim();
+    const markdown = withSuppressedOutput(() => String(markdownFactory(html || "", url || "") || "").trim());
     if (markdown && !markdown.startsWith("Partial conversion completed with errors.")) {
       return markdown;
     }
   } catch {
     // fall through to Turndown fallback
-  } finally {
-    console.error = originalError;
-    process.stderr.write = originalStderrWrite;
   }
 
   return fallbackTurndown.turndown(html || "").trim();
@@ -94,8 +118,10 @@ async function main() {
   }
 
   const { document } = parseHTML(html);
-  const defuddle = new Defuddle(document, { url: input.url || "" });
-  const result = defuddle.parse();
+  const result = withSuppressedOutput(() => {
+    const defuddle = new Defuddle(document, { url: input.url || "" });
+    return defuddle.parse();
+  });
   const markdown = convertToMarkdown(result.content || "", input.url || "");
 
   const output = {
